@@ -66,6 +66,9 @@ type TableRow struct {
 	// WantDeletes holds the ordered list of Delete calls we expect during reconciliation.
 	WantDeletes []clientgotesting.DeleteActionImpl
 
+	// WantGets holds the ordered list of Get calls we expect during reconciliation.
+	WantGets []clientgotesting.GetActionImpl
+
 	// WantDeleteCollections holds the ordered list of DeleteCollection calls we expect during reconciliation.
 	WantDeleteCollections []clientgotesting.DeleteCollectionActionImpl
 
@@ -252,6 +255,25 @@ func (r *TableRow) Test(t *testing.T, factory Factory) {
 	if got, want := len(actions.Deletes), len(r.WantDeletes); got > want {
 		for _, extra := range actions.Deletes[want:] {
 			t.Errorf("Extra delete: %s/%s", extra.GetNamespace(), extra.GetName())
+		}
+	}
+
+	for i, want := range r.WantGets {
+		if i >= len(actions.Gets) {
+			t.Errorf("Missing get: %#v", want)
+			continue
+		}
+		got := actions.Gets[i]
+		if got.GetName() != want.GetName() {
+			t.Errorf("Unexpected get[%d]: %#v", i, got)
+		}
+		if !r.SkipNamespaceValidation && got.GetNamespace() != expectedNamespace {
+			t.Errorf("Unexpected get[%d]: %#v", i, got)
+		}
+	}
+	if got, want := len(actions.Gets), len(r.WantGets); got > want {
+		for _, extra := range actions.Gets[want:] {
+			t.Errorf("Extra get: %s/%s", extra.GetNamespace(), extra.GetName())
 		}
 	}
 
