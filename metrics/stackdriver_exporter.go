@@ -92,7 +92,7 @@ func getMonitoredResourceFunc(metricTypePrefix string, gm *monitoredresources.Gc
 		} else if metricskeyeventing.KnativeTriggerMetrics.Has(metricType) {
 			return monitoredresourceseventing.GetKnativeTriggerMonitoredResource(view, tags, gm)
 		} else if metricskeyeventing.KnativeImporterMetrics.Has(metricType) {
-			return monitoredresourceseventing.GetKnativeTriggerMonitoredResource(view, tags, gm)
+			return monitoredresourceseventing.GetKnativeImporterMonitoredResource(view, tags, gm)
 		}
 		// Unsupported metric by knative_revision, knative_broker, knative_trigger, and knative_importer, use "global" resource type.
 		return getGlobalMonitoredResource(view, tags)

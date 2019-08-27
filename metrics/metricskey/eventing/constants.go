@@ -37,15 +37,6 @@ const (
 	// LabelBrokerName is the label for the name of the Broker.
 	LabelBrokerName = "broker_name"
 
-	// LabelTriggerTypeFilterAttribute is the label for the type filter attribute of the Trigger.
-	LabelTriggerTypeFilterAttribute = "type_filter_attribute"
-
-	// LabelTriggerSourceFilterAttribute is the label for the source filter attribute of the Trigger.
-	LabelTriggerSourceFilterAttribute = "source_filter_attribute"
-
-	// EventType is the label for the CloudEvents type context attribute.
-	LabelEventType = "event_type"
-
 	// LabelImporterName is the label for the name of the Importer.
 	LabelImporterName = "importer_name"
 
@@ -62,8 +53,6 @@ var (
 		metricskey.LabelNamespaceName,
 		LabelTriggerName,
 		LabelBrokerName,
-		LabelTriggerTypeFilterAttribute,
-		LabelTriggerSourceFilterAttribute,
 	)
 
 	// KnativeTriggerMetrics stores a set of metric types which are supported

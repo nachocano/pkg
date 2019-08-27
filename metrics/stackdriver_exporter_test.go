@@ -27,6 +27,7 @@ import (
 	"go.opencensus.io/tag"
 	. "knative.dev/pkg/logging/testing"
 	"knative.dev/pkg/metrics/metricskey"
+	metricskeyeventing "knative.dev/pkg/metrics/metricskey/eventing"
 	metricskeyserving "knative.dev/pkg/metrics/metricskey/serving"
 )
 
@@ -57,6 +58,35 @@ var (
 		metricName: "desired_pods",
 	}}
 
+	supportedEventingBrokerMetricsTestCases = []struct {
+		name       string
+		domain     string
+		component  string
+		metricName string
+	}{{
+		name:       "broker metric",
+		domain:     eventingDomain,
+		component:  "broker",
+		metricName: "event_count",
+	}}
+
+	supportedEventingTriggerMetricsTestCases = []struct {
+		name       string
+		domain     string
+		component  string
+		metricName string
+	}{{
+		name:       "trigger metric",
+		domain:     eventingDomain,
+		component:  "trigger",
+		metricName: "event_count",
+	}, {
+		name:       "trigger metric",
+		domain:     eventingDomain,
+		component:  "trigger",
+		metricName: "event_process_latencies",
+	}}
+
 	unsupportedMetricsTestCases = []struct {
 		name       string
 		domain     string
@@ -76,6 +106,16 @@ var (
 		name:       "unsupported metric",
 		domain:     servingDomain,
 		component:  "activator",
+		metricName: "unsupported",
+	}, {
+		name:       "unsupported component",
+		domain:     eventingDomain,
+		component:  "unsupported",
+		metricName: "event_count",
+	}, {
+		name:       "unsupported metric",
+		domain:     eventingDomain,
+		component:  "broker",
 		metricName: "unsupported",
 	}}
 )
@@ -120,6 +160,33 @@ func TestGetMonitoredResourceFunc_UseKnativeRevision(t *testing.T) {
 		got, ok = labels[metricskeyserving.LabelConfigurationName]
 		if !ok || got != metricskey.ValueUnknown {
 			t.Errorf("expected label %v with value %v, got: %v", metricskeyserving.LabelConfigurationName, metricskey.ValueUnknown, got)
+		}
+	}
+}
+
+func TestGetMonitoredResourceFunc_UseKnativeBroker(t *testing.T) {
+	for _, testCase := range supportedEventingBrokerMetricsTestCases {
+		testView = &view.View{
+			Description: "Test View",
+			Measure:     stats.Int64(testCase.metricName, "Test Measure", stats.UnitNone),
+			Aggregation: view.LastValue(),
+			TagKeys:     []tag.Key{},
+		}
+		mrf := getMonitoredResourceFunc(path.Join(testCase.domain, testCase.component), &testGcpMetadata)
+
+		newTags, monitoredResource := mrf(testView, testTags)
+		gotResType, labels := monitoredResource.MonitoredResource()
+		wantedResType := "knative_broker"
+		if gotResType != wantedResType {
+			t.Fatalf("MonitoredResource=%v, want %v", gotResType, wantedResType)
+		}
+		got := getResourceLabelValue(metricskeyeventing.LabelBrokerName, newTags)
+		if got != testBroker {
+			t.Errorf("expected new tag: %v, got: %v", brokerKey, newTags)
+		}
+		got, ok := labels[metricskey.LabelNamespaceName]
+		if !ok || got != testNS {
+			t.Errorf("expected label %v with value %v, got: %v", metricskey.LabelNamespaceName, testNS, got)
 		}
 	}
 }

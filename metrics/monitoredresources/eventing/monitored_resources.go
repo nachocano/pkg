@@ -57,14 +57,12 @@ type KnativeImporter struct {
 
 func (kt *KnativeTrigger) MonitoredResource() (resType string, labels map[string]string) {
 	labels = map[string]string{
-		metricskey.LabelProject:                              kt.Project,
-		metricskey.LabelLocation:                             kt.Location,
-		metricskey.LabelClusterName:                          kt.ClusterName,
-		metricskey.LabelNamespaceName:                        kt.NamespaceName,
-		metricskeyeventing.LabelTriggerName:                  kt.TriggerName,
-		metricskeyeventing.LabelBrokerName:                   kt.BrokerName,
-		metricskeyeventing.LabelTriggerTypeFilterAttribute:   kt.TypeFilterAttribute,
-		metricskeyeventing.LabelTriggerSourceFilterAttribute: kt.SourceFilterAttribute,
+		metricskey.LabelProject:             kt.Project,
+		metricskey.LabelLocation:            kt.Location,
+		metricskey.LabelClusterName:         kt.ClusterName,
+		metricskey.LabelNamespaceName:       kt.NamespaceName,
+		metricskeyeventing.LabelTriggerName: kt.TriggerName,
+		metricskeyeventing.LabelBrokerName:  kt.BrokerName,
 	}
 	return "knative_trigger", labels
 }
@@ -125,11 +123,9 @@ func GetKnativeTriggerMonitoredResource(
 		Location:    gm.Location,
 		ClusterName: gm.Cluster,
 		// The rest resource labels are from metrics labels.
-		NamespaceName:         monitoredresources.ValueOrUnknown(metricskey.LabelNamespaceName, tagsMap),
-		TriggerName:           monitoredresources.ValueOrUnknown(metricskeyeventing.LabelTriggerName, tagsMap),
-		BrokerName:            monitoredresources.ValueOrUnknown(metricskeyeventing.LabelBrokerName, tagsMap),
-		TypeFilterAttribute:   monitoredresources.ValueOrUnknown(metricskeyeventing.LabelTriggerTypeFilterAttribute, tagsMap),
-		SourceFilterAttribute: monitoredresources.ValueOrUnknown(metricskeyeventing.LabelTriggerSourceFilterAttribute, tagsMap),
+		NamespaceName: monitoredresources.ValueOrUnknown(metricskey.LabelNamespaceName, tagsMap),
+		TriggerName:   monitoredresources.ValueOrUnknown(metricskeyeventing.LabelTriggerName, tagsMap),
+		BrokerName:    monitoredresources.ValueOrUnknown(metricskeyeventing.LabelBrokerName, tagsMap),
 	}
 
 	var newTags []tag.Tag

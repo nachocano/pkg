@@ -23,6 +23,7 @@ import (
 	"go.opencensus.io/tag"
 	. "knative.dev/pkg/logging/testing"
 	"knative.dev/pkg/metrics/metricskey"
+	metricskeyeventing "knative.dev/pkg/metrics/metricskey/eventing"
 	metricskeyserving "knative.dev/pkg/metrics/metricskey/serving"
 )
 
@@ -32,6 +33,9 @@ const (
 	testRoute         = "test-route"
 	testConfiguration = "test-configuration"
 	testRevision      = "test-revision"
+	testBroker        = "test-broker"
+	testTrigger       = "test-trigger"
+	testImporter      = "test-importer"
 )
 
 var (
@@ -46,8 +50,11 @@ var (
 	serviceKey  = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelServiceName), Value: testService}
 	routeKey    = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRouteName), Value: testRoute}
 	revisionKey = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRevisionName), Value: testRevision}
+	brokerKey   = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelBrokerName), Value: testBroker}
+	triggerKey  = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelTriggerName), Value: testTrigger}
+	importerKey = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelImporterName), Value: testImporter}
 
-	testTags = []tag.Tag{nsKey, serviceKey, routeKey, revisionKey}
+	testTags = []tag.Tag{nsKey, serviceKey, routeKey, revisionKey, brokerKey, triggerKey, importerKey}
 )
 
 func mustNewTagKey(s string) tag.Key {
