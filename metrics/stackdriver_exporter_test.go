@@ -1,18 +1,23 @@
 /*
-Copyright 2019 The Knative Authors.
+Copyright 2019 The Knative Authors
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     http://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package metrics
 
 import (
+	"knative.dev/pkg/metrics/monitoredresources"
 	"path"
 	"testing"
 
@@ -22,16 +27,20 @@ import (
 	"go.opencensus.io/tag"
 	. "knative.dev/pkg/logging/testing"
 	"knative.dev/pkg/metrics/metricskey"
+	metricskeyserving "knative.dev/pkg/metrics/metricskey/serving"
 )
 
+// TODO should be properly refactored and pieces should move to eventing and serving, as appropriate.
+// 	See https://github.com/knative/pkg/issues/608
+
 var (
-	testGcpMetadata = gcpMetadata{
-		project:  "test-project",
-		location: "test-location",
-		cluster:  "test-cluster",
+	testGcpMetadata = monitoredresources.GcpMetadata{
+		Project:  "test-project",
+		Location: "test-location",
+		Cluster:  "test-cluster",
 	}
 
-	supportedMetricsTestCases = []struct {
+	supportedServingMetricsTestCases = []struct {
 		name       string
 		domain     string
 		component  string
@@ -71,7 +80,7 @@ var (
 	}}
 )
 
-func fakeGcpMetadataFun() *gcpMetadata {
+func fakeGcpMetadataFun() *monitoredresources.GcpMetadata {
 	return &testGcpMetadata
 }
 
@@ -85,7 +94,7 @@ func newFakeExporter(o stackdriver.Options) (view.Exporter, error) {
 }
 
 func TestGetMonitoredResourceFunc_UseKnativeRevision(t *testing.T) {
-	for _, testCase := range supportedMetricsTestCases {
+	for _, testCase := range supportedServingMetricsTestCases {
 		testView = &view.View{
 			Description: "Test View",
 			Measure:     stats.Int64(testCase.metricName, "Test Measure", stats.UnitNone),
@@ -100,7 +109,7 @@ func TestGetMonitoredResourceFunc_UseKnativeRevision(t *testing.T) {
 		if gotResType != wantedResType {
 			t.Fatalf("MonitoredResource=%v, want %v", gotResType, wantedResType)
 		}
-		got := getResourceLabelValue(metricskey.LabelRouteName, newTags)
+		got := getResourceLabelValue(metricskeyserving.LabelRouteName, newTags)
 		if got != testRoute {
 			t.Errorf("expected new tag: %v, got: %v", routeKey, newTags)
 		}
@@ -108,9 +117,9 @@ func TestGetMonitoredResourceFunc_UseKnativeRevision(t *testing.T) {
 		if !ok || got != testNS {
 			t.Errorf("expected label %v with value %v, got: %v", metricskey.LabelNamespaceName, testNS, got)
 		}
-		got, ok = labels[metricskey.LabelConfigurationName]
+		got, ok = labels[metricskeyserving.LabelConfigurationName]
 		if !ok || got != metricskey.ValueUnknown {
-			t.Errorf("expected label %v with value %v, got: %v", metricskey.LabelConfigurationName, metricskey.ValueUnknown, got)
+			t.Errorf("expected label %v with value %v, got: %v", metricskeyserving.LabelConfigurationName, metricskey.ValueUnknown, got)
 		}
 	}
 }
@@ -142,7 +151,7 @@ func TestGetMonitoredResourceFunc_UseGlobal(t *testing.T) {
 }
 
 func TestGetgetMetricTypeFunc_UseKnativeDomain(t *testing.T) {
-	for _, testCase := range supportedMetricsTestCases {
+	for _, testCase := range supportedServingMetricsTestCases {
 		testView = &view.View{
 			Description: "Test View",
 			Measure:     stats.Int64(testCase.metricName, "Test Measure", stats.UnitNone),

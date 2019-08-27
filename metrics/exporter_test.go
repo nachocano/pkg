@@ -23,6 +23,7 @@ import (
 	"go.opencensus.io/tag"
 	. "knative.dev/pkg/logging/testing"
 	"knative.dev/pkg/metrics/metricskey"
+	metricskeyserving "knative.dev/pkg/metrics/metricskey/serving"
 )
 
 const (
@@ -42,9 +43,9 @@ var (
 	}
 
 	nsKey       = tag.Tag{Key: mustNewTagKey(metricskey.LabelNamespaceName), Value: testNS}
-	serviceKey  = tag.Tag{Key: mustNewTagKey(metricskey.LabelServiceName), Value: testService}
-	routeKey    = tag.Tag{Key: mustNewTagKey(metricskey.LabelRouteName), Value: testRoute}
-	revisionKey = tag.Tag{Key: mustNewTagKey(metricskey.LabelRevisionName), Value: testRevision}
+	serviceKey  = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelServiceName), Value: testService}
+	routeKey    = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRouteName), Value: testRoute}
+	revisionKey = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRevisionName), Value: testRevision}
 
 	testTags = []tag.Tag{nsKey, serviceKey, routeKey, revisionKey}
 )

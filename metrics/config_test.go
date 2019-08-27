@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	servingDomain = "knative.dev/serving"
-	badDomain     = "test.domain"
-	testComponent = "testComponent"
-	testProj      = "test-project"
-	anotherProj   = "another-project"
+	servingDomain  = "knative.dev/serving"
+	eventingDomain = "knative.dev/eventing"
+	badDomain      = "test.domain"
+	testComponent  = "testComponent"
+	testProj       = "test-project"
+	anotherProj    = "another-project"
 )
 
 var (
@@ -36,9 +37,16 @@ var (
 		ops         ExporterOptions
 		expectedErr string
 	}{{
-		name: "empty config",
+		name: "empty config serving",
 		ops: ExporterOptions{
 			Domain:    servingDomain,
+			Component: testComponent,
+		},
+		expectedErr: "metrics config map cannot be empty",
+	}, {
+		name: "empty config eventing",
+		ops: ExporterOptions{
+			Domain:    eventingDomain,
 			Component: testComponent,
 		},
 		expectedErr: "metrics config map cannot be empty",
