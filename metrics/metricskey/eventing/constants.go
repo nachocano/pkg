@@ -37,11 +37,23 @@ const (
 	// LabelBrokerName is the label for the name of the Broker.
 	LabelBrokerName = "broker_name"
 
+	// LabelEventType is the label for the name of the event type.
+	LabelEventType = "event_type"
+
+	// LabelEventSource is the label for the name of the event source.
+	LabelEventSource = "event_source"
+
+	// LabelFilterType is the label for the Trigger filter attribute "type".
+	LabelFilterType = "filter_type"
+
+	// LabelFilterSource is the label for the Trigger filter attribute "source".
+	LabelFilterSource = "filter_source"
+
 	// LabelImporterName is the label for the name of the Importer.
 	LabelImporterName = "importer_name"
 
-	// LabelImporterKind is the full kind of the Importer.
-	LabelImporterKind = "importer_kind"
+	// LabelImporterResourceGroup is the name of the Importer CRD.
+	LabelImporterResourceGroup = "importer_resource_group"
 )
 
 var (
@@ -59,7 +71,7 @@ var (
 	// by resource type knative_trigger.
 	KnativeTriggerMetrics = sets.NewString(
 		"knative.dev/eventing/trigger/event_count",
-		"knative.dev/eventing/trigger/event_process_latencies",
+		"knative.dev/eventing/trigger/event_processing_latencies",
 		"knative.dev/eventing/trigger/event_dispatch_latencies",
 	)
 
@@ -85,7 +97,7 @@ var (
 		metricskey.LabelClusterName,
 		metricskey.LabelNamespaceName,
 		LabelImporterName,
-		LabelImporterKind,
+		LabelImporterResourceGroup,
 	)
 
 	// KnativeImporterMetrics stores a set of metric types which are supported

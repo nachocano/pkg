@@ -33,9 +33,15 @@ const (
 	testRoute         = "test-route"
 	testConfiguration = "test-configuration"
 	testRevision      = "test-revision"
-	testBroker        = "test-broker"
-	testTrigger       = "test-trigger"
-	testImporter      = "test-importer"
+
+	testBroker                = "test-broker"
+	testEventType             = "test-eventtype"
+	testEventSource           = "test-eventsource"
+	testTrigger               = "test-trigger"
+	testFilterType            = "test-filtertype"
+	testFilterSource          = "test-filtersource"
+	testImporter              = "test-importer"
+	testImporterResourceGroup = "test-importer-rg"
 )
 
 var (
@@ -46,15 +52,26 @@ var (
 		TagKeys:     []tag.Key{},
 	}
 
-	nsKey       = tag.Tag{Key: mustNewTagKey(metricskey.LabelNamespaceName), Value: testNS}
+	nsKey = tag.Tag{Key: mustNewTagKey(metricskey.LabelNamespaceName), Value: testNS}
+
 	serviceKey  = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelServiceName), Value: testService}
 	routeKey    = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRouteName), Value: testRoute}
 	revisionKey = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRevisionName), Value: testRevision}
-	brokerKey   = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelBrokerName), Value: testBroker}
-	triggerKey  = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelTriggerName), Value: testTrigger}
-	importerKey = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelImporterName), Value: testImporter}
 
-	testTags = []tag.Tag{nsKey, serviceKey, routeKey, revisionKey, brokerKey, triggerKey, importerKey}
+	brokerKey                = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelBrokerName), Value: testBroker}
+	triggerKey               = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelTriggerName), Value: testTrigger}
+	filterTypeKey            = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelFilterType), Value: testFilterType}
+	filterSourceKey          = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelFilterSource), Value: testFilterSource}
+	importerKey              = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelImporterName), Value: testImporter}
+	importerResourceGroupKey = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelImporterResourceGroup), Value: testImporterResourceGroup}
+	eventTypeKey             = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelEventType), Value: testEventType}
+	eventSourceKey           = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelEventSource), Value: testEventSource}
+
+	revisionTestTags = []tag.Tag{nsKey, serviceKey, routeKey, revisionKey}
+
+	brokerTestTags   = []tag.Tag{nsKey, brokerKey, eventTypeKey, eventSourceKey}
+	triggerTestTags  = []tag.Tag{nsKey, triggerKey, brokerKey, filterTypeKey, filterSourceKey}
+	importerTestTags = []tag.Tag{nsKey, importerKey, importerResourceGroupKey, eventTypeKey, eventSourceKey}
 )
 
 func mustNewTagKey(s string) tag.Key {

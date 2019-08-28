@@ -47,12 +47,12 @@ type KnativeBroker struct {
 }
 
 type KnativeImporter struct {
-	Project       string
-	Location      string
-	ClusterName   string
-	NamespaceName string
-	ImporterName  string
-	ImporterKind  string
+	Project               string
+	Location              string
+	ClusterName           string
+	NamespaceName         string
+	ImporterName          string
+	ImporterResourceGroup string
 }
 
 func (kt *KnativeTrigger) MonitoredResource() (resType string, labels map[string]string) {
@@ -80,12 +80,12 @@ func (kb *KnativeBroker) MonitoredResource() (resType string, labels map[string]
 
 func (ki *KnativeImporter) MonitoredResource() (resType string, labels map[string]string) {
 	labels = map[string]string{
-		metricskey.LabelProject:              ki.Project,
-		metricskey.LabelLocation:             ki.Location,
-		metricskey.LabelClusterName:          ki.ClusterName,
-		metricskey.LabelNamespaceName:        ki.NamespaceName,
-		metricskeyeventing.LabelImporterName: ki.ImporterName,
-		metricskeyeventing.LabelImporterKind: ki.ImporterKind,
+		metricskey.LabelProject:                       ki.Project,
+		metricskey.LabelLocation:                      ki.Location,
+		metricskey.LabelClusterName:                   ki.ClusterName,
+		metricskey.LabelNamespaceName:                 ki.NamespaceName,
+		metricskeyeventing.LabelImporterName:          ki.ImporterName,
+		metricskeyeventing.LabelImporterResourceGroup: ki.ImporterResourceGroup,
 	}
 	return "knative_importer", labels
 }
@@ -148,9 +148,9 @@ func GetKnativeImporterMonitoredResource(
 		Location:    gm.Location,
 		ClusterName: gm.Cluster,
 		// The rest resource labels are from metrics labels.
-		NamespaceName: monitoredresources.ValueOrUnknown(metricskey.LabelNamespaceName, tagsMap),
-		ImporterName:  monitoredresources.ValueOrUnknown(metricskeyeventing.LabelImporterName, tagsMap),
-		ImporterKind:  monitoredresources.ValueOrUnknown(metricskeyeventing.LabelImporterKind, tagsMap),
+		NamespaceName:         monitoredresources.ValueOrUnknown(metricskey.LabelNamespaceName, tagsMap),
+		ImporterName:          monitoredresources.ValueOrUnknown(metricskeyeventing.LabelImporterName, tagsMap),
+		ImporterResourceGroup: monitoredresources.ValueOrUnknown(metricskeyeventing.LabelImporterResourceGroup, tagsMap),
 	}
 
 	var newTags []tag.Tag
