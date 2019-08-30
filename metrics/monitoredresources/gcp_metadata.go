@@ -14,36 +14,36 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package monitoredresources
+package metrics
 
 import (
 	"cloud.google.com/go/compute/metadata"
 	"knative.dev/pkg/metrics/metricskey"
 )
 
-type GcpMetadata struct {
-	Project  string
-	Location string
-	Cluster  string
+type gcpMetadata struct {
+	project  string
+	location string
+	cluster  string
 }
 
-func RetrieveGCPMetadata() *GcpMetadata {
-	gm := GcpMetadata{
-		Project:  metricskey.ValueUnknown,
-		Location: metricskey.ValueUnknown,
-		Cluster:  metricskey.ValueUnknown,
+func retrieveGCPMetadata() *gcpMetadata {
+	gm := gcpMetadata{
+		project:  metricskey.ValueUnknown,
+		location: metricskey.ValueUnknown,
+		cluster:  metricskey.ValueUnknown,
 	}
 	project, err := metadata.NumericProjectID()
 	if err == nil && project != "" {
-		gm.Project = project
+		gm.project = project
 	}
 	location, err := metadata.InstanceAttributeValue("cluster-location")
 	if err == nil && location != "" {
-		gm.Location = location
+		gm.location = location
 	}
 	cluster, err := metadata.InstanceAttributeValue("cluster-name")
 	if err == nil && cluster != "" {
-		gm.Cluster = cluster
+		gm.cluster = cluster
 	}
 	return &gm
 }

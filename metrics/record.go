@@ -21,8 +21,7 @@ import (
 	"path"
 
 	"go.opencensus.io/stats"
-	metricskeyeventing "knative.dev/pkg/metrics/metricskey/eventing"
-	metricskeyserving "knative.dev/pkg/metrics/metricskey/serving"
+	"knative.dev/pkg/metrics/metricskey"
 )
 
 // TODO should be properly refactored and pieces should move to eventing and serving, as appropriate.
@@ -55,10 +54,10 @@ func Record(ctx context.Context, ms stats.Measurement) {
 
 	// Condition 4)
 	metricType := path.Join(mc.stackdriverMetricTypePrefix, ms.Measure().Name())
-	isServingBuiltIn := metricskeyserving.KnativeRevisionMetrics.Has(metricType)
-	isEventingBuiltIn := metricskeyeventing.KnativeTriggerMetrics.Has(metricType) ||
-		metricskeyeventing.KnativeBrokerMetrics.Has(metricType) ||
-		metricskeyeventing.KnativeImporterMetrics.Has(metricType)
+	isServingBuiltIn := metricskey.KnativeRevisionMetrics.Has(metricType)
+	isEventingBuiltIn := metricskey.KnativeTriggerMetrics.Has(metricType) ||
+		metricskey.KnativeBrokerMetrics.Has(metricType) ||
+		metricskey.KnativeImporterMetrics.Has(metricType)
 
 	if isServingBuiltIn || isEventingBuiltIn {
 		stats.Record(ctx, ms)

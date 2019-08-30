@@ -23,9 +23,10 @@ import (
 	"go.opencensus.io/tag"
 	. "knative.dev/pkg/logging/testing"
 	"knative.dev/pkg/metrics/metricskey"
-	metricskeyeventing "knative.dev/pkg/metrics/metricskey/eventing"
-	metricskeyserving "knative.dev/pkg/metrics/metricskey/serving"
 )
+
+// TODO UTs should move to eventing and serving, as appropriate.
+// 	See https://github.com/knative/pkg/issues/608
 
 const (
 	testNS            = "test"
@@ -54,18 +55,18 @@ var (
 
 	nsKey = tag.Tag{Key: mustNewTagKey(metricskey.LabelNamespaceName), Value: testNS}
 
-	serviceKey  = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelServiceName), Value: testService}
-	routeKey    = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRouteName), Value: testRoute}
-	revisionKey = tag.Tag{Key: mustNewTagKey(metricskeyserving.LabelRevisionName), Value: testRevision}
+	serviceKey  = tag.Tag{Key: mustNewTagKey(metricskey.LabelServiceName), Value: testService}
+	routeKey    = tag.Tag{Key: mustNewTagKey(metricskey.LabelRouteName), Value: testRoute}
+	revisionKey = tag.Tag{Key: mustNewTagKey(metricskey.LabelRevisionName), Value: testRevision}
 
-	brokerKey                = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelBrokerName), Value: testBroker}
-	triggerKey               = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelTriggerName), Value: testTrigger}
-	filterTypeKey            = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelFilterType), Value: testFilterType}
-	filterSourceKey          = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelFilterSource), Value: testFilterSource}
-	importerKey              = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelImporterName), Value: testImporter}
-	importerResourceGroupKey = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelImporterResourceGroup), Value: testImporterResourceGroup}
-	eventTypeKey             = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelEventType), Value: testEventType}
-	eventSourceKey           = tag.Tag{Key: mustNewTagKey(metricskeyeventing.LabelEventSource), Value: testEventSource}
+	brokerKey                = tag.Tag{Key: mustNewTagKey(metricskey.LabelBrokerName), Value: testBroker}
+	triggerKey               = tag.Tag{Key: mustNewTagKey(metricskey.LabelTriggerName), Value: testTrigger}
+	filterTypeKey            = tag.Tag{Key: mustNewTagKey(metricskey.LabelFilterType), Value: testFilterType}
+	filterSourceKey          = tag.Tag{Key: mustNewTagKey(metricskey.LabelFilterSource), Value: testFilterSource}
+	importerKey              = tag.Tag{Key: mustNewTagKey(metricskey.LabelImporterName), Value: testImporter}
+	importerResourceGroupKey = tag.Tag{Key: mustNewTagKey(metricskey.LabelImporterResourceGroup), Value: testImporterResourceGroup}
+	eventTypeKey             = tag.Tag{Key: mustNewTagKey(metricskey.LabelEventType), Value: testEventType}
+	eventSourceKey           = tag.Tag{Key: mustNewTagKey(metricskey.LabelEventSource), Value: testEventSource}
 
 	revisionTestTags = []tag.Tag{nsKey, serviceKey, routeKey, revisionKey}
 

@@ -17,18 +17,14 @@ limitations under the License.
 package metrics
 
 import (
+	"path"
+
 	"contrib.go.opencensus.io/exporter/stackdriver"
 	"contrib.go.opencensus.io/exporter/stackdriver/monitoredresource"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
 	"go.uber.org/zap"
-	"path"
-
-	metricskeyeventing "knative.dev/pkg/metrics/metricskey/eventing"
-	metricskeyserving "knative.dev/pkg/metrics/metricskey/serving"
-	"knative.dev/pkg/metrics/monitoredresources"
-	monitoredresourceseventing "knative.dev/pkg/metrics/monitoredresources/eventing"
-	monitoredresourcesserving "knative.dev/pkg/metrics/monitoredresources/serving"
+	"knative.dev/pkg/metrics/metricskey"
 )
 
 // customMetricTypePrefix is the metric type prefix for unsupported metrics by
@@ -41,7 +37,7 @@ var (
 	// In product usage, this is always set to function retrieveGCPMetadata.
 	// In unit tests this is set to a fake one to avoid calling GCP metadata
 	// service.
-	gcpMetadataFunc func() *monitoredresources.GcpMetadata
+	gcpMetadataFunc func() *gcpMetadata
 
 	// newStackdriverExporterFunc is the function used to create new stackdriver
 	// exporter.
@@ -53,7 +49,7 @@ var (
 
 func init() {
 	// Set gcpMetadataFunc to call GCP metadata service.
-	gcpMetadataFunc = monitoredresources.RetrieveGCPMetadata
+	gcpMetadataFunc = retrieveGCPMetadata
 
 	newStackdriverExporterFunc = newOpencensusSDExporter
 }
@@ -62,7 +58,7 @@ func newOpencensusSDExporter(o stackdriver.Options) (view.Exporter, error) {
 	return stackdriver.NewExporter(o)
 }
 
-// TODO should be properly refactored to be able to inject the function.
+// TODO should be properly refactored to be able to inject the getMonitoredResourceFunc function.
 // 	See https://github.com/knative/pkg/issues/608
 func newStackdriverExporter(config *metricsConfig, logger *zap.SugaredLogger) (view.Exporter, error) {
 	gm := gcpMetadataFunc()
@@ -82,17 +78,17 @@ func newStackdriverExporter(config *metricsConfig, logger *zap.SugaredLogger) (v
 	return e, nil
 }
 
-func getMonitoredResourceFunc(metricTypePrefix string, gm *monitoredresources.GcpMetadata) func(v *view.View, tags []tag.Tag) ([]tag.Tag, monitoredresource.Interface) {
+func getMonitoredResourceFunc(metricTypePrefix string, gm *gcpMetadata) func(v *view.View, tags []tag.Tag) ([]tag.Tag, monitoredresource.Interface) {
 	return func(view *view.View, tags []tag.Tag) ([]tag.Tag, monitoredresource.Interface) {
 		metricType := path.Join(metricTypePrefix, view.Measure.Name())
-		if metricskeyserving.KnativeRevisionMetrics.Has(metricType) {
-			return monitoredresourcesserving.GetKnativeRevisionMonitoredResource(view, tags, gm)
-		} else if metricskeyeventing.KnativeBrokerMetrics.Has(metricType) {
-			return monitoredresourceseventing.GetKnativeBrokerMonitoredResource(view, tags, gm)
-		} else if metricskeyeventing.KnativeTriggerMetrics.Has(metricType) {
-			return monitoredresourceseventing.GetKnativeTriggerMonitoredResource(view, tags, gm)
-		} else if metricskeyeventing.KnativeImporterMetrics.Has(metricType) {
-			return monitoredresourceseventing.GetKnativeImporterMonitoredResource(view, tags, gm)
+		if metricskey.KnativeRevisionMetrics.Has(metricType) {
+			return GetKnativeRevisionMonitoredResource(view, tags, gm)
+		} else if metricskey.KnativeBrokerMetrics.Has(metricType) {
+			return GetKnativeBrokerMonitoredResource(view, tags, gm)
+		} else if metricskey.KnativeTriggerMetrics.Has(metricType) {
+			return GetKnativeTriggerMonitoredResource(view, tags, gm)
+		} else if metricskey.KnativeImporterMetrics.Has(metricType) {
+			return GetKnativeImporterMonitoredResource(view, tags, gm)
 		}
 		// Unsupported metric by knative_revision, knative_broker, knative_trigger, and knative_importer, use "global" resource type.
 		return getGlobalMonitoredResource(view, tags)
@@ -100,16 +96,16 @@ func getMonitoredResourceFunc(metricTypePrefix string, gm *monitoredresources.Gc
 }
 
 func getGlobalMonitoredResource(v *view.View, tags []tag.Tag) ([]tag.Tag, monitoredresource.Interface) {
-	return tags, &monitoredresources.Global{}
+	return tags, &Global{}
 }
 
 func getMetricTypeFunc(metricTypePrefix, customMetricTypePrefix string) func(view *view.View) string {
 	return func(view *view.View) string {
 		metricType := path.Join(metricTypePrefix, view.Measure.Name())
-		inServing := metricskeyserving.KnativeRevisionMetrics.Has(metricType)
-		inEventing := metricskeyeventing.KnativeBrokerMetrics.Has(metricType) ||
-			metricskeyeventing.KnativeTriggerMetrics.Has(metricType) ||
-			metricskeyeventing.KnativeImporterMetrics.Has(metricType)
+		inServing := metricskey.KnativeRevisionMetrics.Has(metricType)
+		inEventing := metricskey.KnativeBrokerMetrics.Has(metricType) ||
+			metricskey.KnativeTriggerMetrics.Has(metricType) ||
+			metricskey.KnativeImporterMetrics.Has(metricType)
 		if inServing || inEventing {
 			return metricType
 		}
