@@ -251,6 +251,7 @@ func (s *Source) Populate() {
 	}
 }
 
+// IsScalable returns true if the Source has been configured with scaling options.
 func (src *Source) IsScalable() bool {
 	return src.Spec.ScalerSpec != nil
 }
