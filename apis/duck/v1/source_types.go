@@ -251,6 +251,10 @@ func (s *Source) Populate() {
 	}
 }
 
+func (src *Source) IsScalable() bool {
+	return src.Spec.ScalerSpec != nil
+}
+
 // GetListType implements apis.Listable
 func (*Source) GetListType() runtime.Object {
 	return &SourceList{}
