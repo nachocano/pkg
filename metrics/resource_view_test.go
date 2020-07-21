@@ -231,10 +231,11 @@ func TestMetricsExport(t *testing.T) {
 			Component:      testComponent,
 			PrometheusPort: prometheusPort,
 			ConfigMap: map[string]string{
-				BackendDestinationKey:            string(backend),
-				collectorAddressKey:              ocFake.address,
-				allowStackdriverCustomMetricsKey: "true",
-				reportingPeriodKey:               "1",
+				BackendDestinationKey:               string(backend),
+				collectorAddressKey:                 ocFake.address,
+				allowStackdriverCustomMetricsKey:    "true",
+				stackdriverCustomMetricSubDomainKey: servingDomain,
+				reportingPeriodKey:                  "1",
 			},
 		}
 	}
@@ -277,10 +278,10 @@ func TestMetricsExport(t *testing.T) {
 	}
 
 	expected := []metricExtract{
-		{"global_export_counts", map[string]string{}, 2},
-		{"resource_global_export_count", map[string]string{}, 2},
-		{"testing/value", map[string]string{"project": "p1", "revision": "r1"}, 0},
-		{"testing/value", map[string]string{"project": "p1", "revision": "r2"}, 1},
+		{"knative.dev/serving/testComponent/global_export_counts", map[string]string{}, 2},
+		{"knative.dev/serving/testComponent/resource_global_export_count", map[string]string{}, 2},
+		{"knative.dev/serving/testComponent/testing/value", map[string]string{"project": "p1", "revision": "r1"}, 0},
+		{"knative.dev/serving/testComponent/testing/value", map[string]string{"project": "p1", "revision": "r2"}, 1},
 	}
 
 	harnesses := []struct {
@@ -371,7 +372,7 @@ testComponent_testing_value{project="p1",revision="r2"} 1
 			records := []metricExtract{}
 			for record := range sdFake.published {
 				for _, ts := range record.TimeSeries {
-					name := ts.Metric.Type[len("custom.googleapis.com/knative.dev/testComponent/"):]
+					name := ts.Metric.Type[len("custom.googleapis.com/"):]
 					records = append(records, metricExtract{
 						Name:   name,
 						Labels: ts.Resource.Labels,
@@ -646,11 +647,11 @@ type stackDriverFake struct {
 	address   string
 	srv       *grpc.Server
 	t         *testing.T
-	published chan stackdriverpb.CreateTimeSeriesRequest
+	published chan *stackdriverpb.CreateTimeSeriesRequest
 }
 
 func (sd *stackDriverFake) start() error {
-	sd.published = make(chan stackdriverpb.CreateTimeSeriesRequest, 100)
+	sd.published = make(chan *stackdriverpb.CreateTimeSeriesRequest, 100)
 	ln, err := net.Listen("tcp", sd.address)
 	if err != nil {
 		return err
@@ -666,7 +667,7 @@ func (sd *stackDriverFake) start() error {
 }
 
 func (sd *stackDriverFake) CreateTimeSeries(ctx context.Context, req *stackdriverpb.CreateTimeSeriesRequest) (*emptypb.Empty, error) {
-	sd.published <- *req
+	sd.published <- req
 	return nil, nil
 }
 
@@ -688,8 +689,7 @@ func (sd *stackDriverFake) GetMetricDescriptor(context.Context, *stackdriverpb.G
 	return nil, fmt.Errorf("Unimplemented")
 }
 func (sd *stackDriverFake) CreateMetricDescriptor(ctx context.Context, req *stackdriverpb.CreateMetricDescriptorRequest) (*metricpb.MetricDescriptor, error) {
-	resp := *req.MetricDescriptor
-	return &resp, nil
+	return req.MetricDescriptor, nil
 }
 func (sd *stackDriverFake) DeleteMetricDescriptor(context.Context, *stackdriverpb.DeleteMetricDescriptorRequest) (*emptypb.Empty, error) {
 	sd.t.Fatalf("DeleteMetricDescriptor")
