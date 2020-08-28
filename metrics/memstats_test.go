@@ -19,6 +19,7 @@ package metrics
 import (
 	"context"
 	"runtime"
+	"runtime/debug"
 	"testing"
 	"time"
 
@@ -28,9 +29,12 @@ import (
 )
 
 func TestMemStatsMetrics(t *testing.T) {
+	oldV := debug.SetGCPercent(-1)
+	t.Cleanup(func() { debug.SetGCPercent(oldV) })
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 
-	period := 200 * time.Millisecond
+	const period = 200 * time.Millisecond
 
 	msp := NewMemStatsAll()
 	msp.Start(ctx, period)
@@ -109,25 +113,28 @@ func TestMemStatsMetrics(t *testing.T) {
 		"go_gc_cpu_fraction",
 	)
 
+	want := metricstest.GetLastValueData(t, "go_num_forced_gc", map[string]string{})
 	// We have seen zero forced GCs.
-	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, 0)
+	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, want)
 
 	// Force a GC, and wait for the reporting period.
 	runtime.GC()
+	want++
 	time.Sleep(period + 100*time.Millisecond)
 
 	// Now we should report a single forced GC.
-	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, 1)
+	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, want)
 
 	// Repeat, and we should see two.
 	runtime.GC()
+	want++
 	time.Sleep(period + 100*time.Millisecond)
-	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, 2)
+	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, want)
 
 	// After we cancel the context, it should kill the go routine and any additional GCs
 	// should not be reported.
 	cancel()
 	runtime.GC()
 	time.Sleep(period + 100*time.Millisecond)
-	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, 2)
+	metricstest.CheckLastValueData(t, "go_num_forced_gc", map[string]string{}, want)
 }

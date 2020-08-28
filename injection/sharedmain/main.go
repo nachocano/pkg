@@ -30,16 +30,17 @@ import (
 	"go.opencensus.io/stats/view"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/transport"
 	"k8s.io/klog"
 
+	_ "go.uber.org/automaxprocs" // automatically set GOMAXPROCS based on cgroups
 	"go.uber.org/zap"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
@@ -69,15 +70,6 @@ func GetConfig(masterURL, kubeconfig string) (*rest.Config, error) {
 	// We produce configs a bunch of ways, this gives us a single place
 	// to "decorate" them with common useful things (e.g. for debugging)
 	decorate := func(cfg *rest.Config) *rest.Config {
-		// Augment the rest.Config with a "wrapper" around the transport that
-		// will emit varying levels of debug logging when -v is passed with
-		// levels 6 to 9.
-		wt := transport.DebugWrappers
-		if cfg.WrapTransport != nil {
-			wt = transport.Wrappers(wt, cfg.WrapTransport)
-		}
-		cfg.WrapTransport = wt
-
 		return cfg
 	}
 
@@ -198,6 +190,8 @@ func MainWithConfig(ctx context.Context, component string, cfg *rest.Config, cto
 	if cfg.Burst == 0 {
 		cfg.Burst = len(ctors) * rest.DefaultBurst
 	}
+	ctx = injection.WithConfig(ctx, cfg)
+
 	ctx, informers := injection.Default.SetupInformers(ctx, cfg)
 
 	logger, atomicLevel := SetupLoggerOrDie(ctx, component)

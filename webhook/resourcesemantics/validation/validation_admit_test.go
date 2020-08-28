@@ -278,9 +278,8 @@ func resourceCallback(ctx context.Context, uns *unstructured.Unstructured) error
 	if apis.IsInDelete(ctx) {
 		if resource.Spec.FieldForCallbackValidation != "magic delete" {
 			return errors.New("no magic delete")
-		} else {
-			return nil
 		}
+		return nil
 	}
 
 	if apis.IsDryRun(ctx) {
@@ -648,7 +647,7 @@ func NewTestResourceAdmissionController(t *testing.T) *reconciler {
 		t.Fatal("Expected NewController to return a non-nil value")
 	}
 
-	if want, got := 0, c.WorkQueue.Len(); want != got {
+	if want, got := 0, c.WorkQueue().Len(); want != got {
 		t.Errorf("WorkQueue.Len() = %d, wanted %d", got, want)
 	}
 
@@ -663,7 +662,7 @@ func NewTestResourceAdmissionController(t *testing.T) *reconciler {
 
 	// Queue has async moving parts so if we check at the wrong moment, this might still be 0.
 	if wait.PollImmediate(10*time.Millisecond, 250*time.Millisecond, func() (bool, error) {
-		return c.WorkQueue.Len() == 1, nil
+		return c.WorkQueue().Len() == 1, nil
 	}) != nil {
 		t.Error("Queue length was never 1")
 	}

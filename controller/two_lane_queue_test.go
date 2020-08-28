@@ -20,14 +20,81 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/workqueue"
 )
 
-func TestSlowQueue(t *testing.T) {
-	q := newTwoLaneWorkQueue("live-in-the-fast-lane")
-	q.SlowLane().Add("1")
-	if got, want := q.Len(), 1; got != want {
-		t.Errorf("Len = %d, want: 1", got)
+type chanRateLimiter struct {
+	t *testing.T
+	// Called when this ratelimiter is consulted for when to process a value.
+	whenCalled chan interface{}
+}
+
+func (r *chanRateLimiter) When(item interface{}) time.Duration {
+	r.whenCalled <- item
+	return 0
+}
+
+func (r *chanRateLimiter) Forget(item interface{}) {
+	r.t.Fatalf("Forgetting item %+v, we should not be forgetting any items.", item)
+}
+
+func (r *chanRateLimiter) NumRequeues(item interface{}) int {
+	return 0
+}
+
+var _ workqueue.RateLimiter = &chanRateLimiter{}
+
+func TestRateLimit(t *testing.T) {
+	// Verifies that we properly pass the rate limiter to the queue.
+	rl := &chanRateLimiter{
+		t:          t,
+		whenCalled: make(chan interface{}, 1),
 	}
+
+	q := newTwoLaneWorkQueue("live-in-the-limited-lane", rl)
+	// Verify the slow lane has the proper RL.
+	q.SlowLane().AddRateLimited("1")
+	select {
+	case <-rl.whenCalled:
+		// As desired.
+	default:
+		t.Error("Didn't go to the proper rate limiter.")
+	}
+
+	// Verify the fast lane has the proper RL.
+	q.AddRateLimited("2")
+	select {
+	case <-rl.whenCalled:
+		// As desired.
+	default:
+		t.Error("Didn't go to the proper rate limiter.")
+	}
+
+	// Verify the items were properly added for consumption.
+	if wait.PollImmediate(10*time.Millisecond, 250*time.Millisecond, func() (bool, error) {
+		return q.Len() == 2, nil
+	}) != nil {
+		t.Error("Queue length was never 2")
+	}
+	// And drain.
+	q.ShutDown()
+	for q.Len() > 0 {
+		q.Get()
+	}
+}
+
+func TestSlowQueue(t *testing.T) {
+	q := newTwoLaneWorkQueue("live-in-the-fast-lane", workqueue.DefaultControllerRateLimiter())
+	q.SlowLane().Add("1")
+	// Queue has async moving parts so if we check at the wrong moment, this might still be 0.
+	if wait.PollImmediate(10*time.Millisecond, 250*time.Millisecond, func() (bool, error) {
+		return q.Len() == 1, nil
+	}) != nil {
+		t.Error("Queue length was never 1")
+	}
+
 	k, done := q.Get()
 	if got, want := k.(string), "1"; got != want {
 		t.Errorf(`Got = %q, want: "1"`, got)
@@ -47,7 +114,7 @@ func TestSlowQueue(t *testing.T) {
 
 func TestDoubleKey(t *testing.T) {
 	// Verifies that we don't get double concurrent processing of the same key.
-	q := newTwoLaneWorkQueue("live-in-the-fast-lane")
+	q := newTwoLaneWorkQueue("live-in-the-fast-lane", workqueue.DefaultControllerRateLimiter())
 	q.Add("1")
 	t.Cleanup(q.ShutDown)
 
@@ -91,7 +158,7 @@ func TestDoubleKey(t *testing.T) {
 
 func TestOrder(t *testing.T) {
 	// Verifies that we read from the fast queue first.
-	q := newTwoLaneWorkQueue("live-in-the-fast-lane")
+	q := newTwoLaneWorkQueue("live-in-the-fast-lane", workqueue.DefaultControllerRateLimiter())
 	stop := make(chan struct{})
 	t.Cleanup(func() {
 		close(stop)

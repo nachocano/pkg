@@ -21,14 +21,16 @@ package leaderelection
 
 import (
 	"context"
+	"fmt"
 	"os"
-	"reflect"
 	"sort"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
 	fakekube "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 	"knative.dev/pkg/reconciler"
@@ -36,9 +38,10 @@ import (
 )
 
 func TestWithBuilder(t *testing.T) {
+	const buckets = 3
 	cc := ComponentConfig{
 		Component:     "the-component",
-		Buckets:       1,
+		Buckets:       buckets,
 		LeaseDuration: 15 * time.Second,
 		RenewDeadline: 10 * time.Second,
 		RetryPeriod:   2 * time.Second,
@@ -46,15 +49,16 @@ func TestWithBuilder(t *testing.T) {
 	kc := fakekube.NewSimpleClientset()
 	ctx := context.Background()
 
-	promoted := make(chan struct{})
+	gotNames := make(sets.String, buckets)
+	promoted := make(chan string)
 	demoted := make(chan struct{})
 	laf := &reconciler.LeaderAwareFuncs{
 		PromoteFunc: func(bkt reconciler.Bucket, enq func(reconciler.Bucket, types.NamespacedName)) error {
-			close(promoted)
+			promoted <- bkt.Name()
 			return nil
 		},
 		DemoteFunc: func(bkt reconciler.Bucket) {
-			close(demoted)
+			demoted <- struct{}{}
 		},
 	}
 	enq := func(reconciler.Bucket, types.NamespacedName) {}
@@ -62,7 +66,7 @@ func TestWithBuilder(t *testing.T) {
 	created := make(chan struct{})
 	kc.PrependReactor("create", "leases",
 		func(action ktesting.Action) (bool, runtime.Object, error) {
-			close(created)
+			created <- struct{}{}
 			return false, nil, nil
 		},
 	)
@@ -70,7 +74,7 @@ func TestWithBuilder(t *testing.T) {
 	updated := make(chan struct{})
 	kc.PrependReactor("update", "leases",
 		func(action ktesting.Action) (bool, runtime.Object, error) {
-			// Only close update once.
+			// Only close updated once.
 			select {
 			case <-updated:
 			default:
@@ -101,7 +105,8 @@ func TestWithBuilder(t *testing.T) {
 
 	// We shouldn't see leases until we Run the elector.
 	select {
-	case <-promoted:
+	case s := <-promoted:
+		gotNames.Insert(s)
 		t.Error("Got promoted, want no actions.")
 	case <-demoted:
 		t.Error("Got demoted, want no actions.")
@@ -116,17 +121,22 @@ func TestWithBuilder(t *testing.T) {
 	t.Cleanup(cancel)
 	go le.Run(ctx)
 
-	select {
-	case <-created:
-		// We expect the lease to be created.
-	case <-time.After(1 * time.Second):
-		t.Fatal("Timed out waiting for lease creation.")
+	// We expect 3 lease to be created.
+	for i := 0; i < buckets; i++ {
+		select {
+		case <-created:
+		case <-time.After(1 * time.Second):
+			t.Fatal("Timed out waiting for lease creation.")
+		}
 	}
-	select {
-	case <-promoted:
-		// We expect to have been promoted.
-	case <-time.After(1 * time.Second):
-		t.Fatal("Timed out waiting for promotion.")
+	// We expect to have been promoted 3 times.
+	for i := 0; i < buckets; i++ {
+		select {
+		case s := <-promoted:
+			gotNames.Insert(s)
+		case <-time.After(time.Second):
+			t.Fatal("Timed out waiting for promotion.")
+		}
 	}
 
 	// Cancelling the context should case us to give up leadership.
@@ -135,14 +145,79 @@ func TestWithBuilder(t *testing.T) {
 	select {
 	case <-updated:
 		// We expect the lease to be updated.
-	case <-time.After(1 * time.Second):
+	case <-time.After(time.Second):
 		t.Fatal("Timed out waiting for lease update.")
 	}
-	select {
-	case <-demoted:
-		// We expect to have been demoted.
-	case <-time.After(1 * time.Second):
-		t.Fatal("Timed out waiting for demotion.")
+	// We expect to have been demoted 3 times.
+	for i := 0; i < buckets; i++ {
+		select {
+		case <-demoted:
+		case <-time.After(time.Second):
+			t.Fatal("Timed out waiting for demotion.")
+		}
+	}
+
+	want := sets.NewString(
+		"the-component.name.00-of-03",
+		"the-component.name.01-of-03",
+		"the-component.name.02-of-03",
+	)
+	if !gotNames.Equal(want) {
+		t.Errorf("BucketSet.BucketList() = %q, want: %q", gotNames, want)
+	}
+}
+
+func TestBuilderWithCustomizedLeaseName(t *testing.T) {
+	const buckets = 3
+	cc := ComponentConfig{
+		Component:     "the-component",
+		Buckets:       buckets,
+		LeaseDuration: 15 * time.Second,
+		RenewDeadline: 10 * time.Second,
+		RetryPeriod:   2 * time.Second,
+		LeaseName: func(i uint32) string {
+			return fmt.Sprintf("bucket-%02d", i)
+		},
+	}
+	kc := fakekube.NewSimpleClientset()
+	ctx := context.Background()
+
+	gotNames := make(sets.String, buckets)
+	promoted := make(chan string)
+	laf := &reconciler.LeaderAwareFuncs{
+		PromoteFunc: func(bkt reconciler.Bucket, enq func(reconciler.Bucket, types.NamespacedName)) error {
+			promoted <- bkt.Name()
+			return nil
+		},
+	}
+	enq := func(reconciler.Bucket, types.NamespacedName) {}
+	ctx = WithDynamicLeaderElectorBuilder(ctx, kc, cc)
+	le, err := BuildElector(ctx, laf, "name", enq)
+	if err != nil {
+		t.Fatalf("BuildElector() = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go le.Run(ctx)
+
+	// We expect to have been promoted 3 times.
+	for i := 0; i < buckets; i++ {
+		select {
+		case s := <-promoted:
+			gotNames.Insert(s)
+		case <-time.After(time.Second):
+			t.Fatal("Timed out waiting for promotion.")
+		}
+	}
+
+	want := sets.NewString(
+		"bucket-00",
+		"bucket-01",
+		"bucket-02",
+	)
+	if !gotNames.Equal(want) {
+		t.Errorf("BucketSet.BucketList() = %q, want: %q", gotNames, want)
 	}
 }
 
@@ -178,10 +253,9 @@ func TestNewStatefulSetBucketAndSet(t *testing.T) {
 
 	gotNames := bs.BucketList()
 	sort.Strings(gotNames)
-	if !reflect.DeepEqual(gotNames, wantNames) {
+	if !cmp.Equal(gotNames, wantNames) {
 		t.Errorf("BucketSet.BucketList() = %q, want: %q", gotNames, wantNames)
 	}
-
 }
 
 func TestWithStatefulSetBuilder(t *testing.T) {
@@ -250,7 +324,7 @@ func TestWithStatefulSetBuilder(t *testing.T) {
 	select {
 	case <-promoted:
 		// We expect to have been promoted.
-	case <-time.After(1 * time.Second):
+	case <-time.After(time.Second):
 		t.Fatal("Timed out waiting for promotion.")
 	}
 }

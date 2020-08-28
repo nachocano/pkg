@@ -18,11 +18,11 @@ package monitoring
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,14 +56,29 @@ func GetPods(kubeClientset *kubernetes.Clientset, app, namespace string) (*v1.Po
 // Cleanup will clean the background process used for port forwarding
 func Cleanup(pid int) error {
 	ps := os.Process{Pid: pid}
-	return ps.Kill()
+	if err := ps.Kill(); err != nil {
+		return err
+	}
+
+	errCh := make(chan error)
+	go func() {
+		_, err := ps.Wait()
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-time.After(30 * time.Second):
+		return fmt.Errorf("timed out waiting for process %d to exit", pid)
+	}
 }
 
 // PortForward sets up local port forward to the pod specified by the "app" label in the given namespace
-func PortForward(logf logging.FormatLogger, podList *v1.PodList, localPort, remotePort int, namespace string, stdout io.Writer, stderr io.Writer) (int, error) {
+func PortForward(logf logging.FormatLogger, podList *v1.PodList, localPort, remotePort int, namespace string) (int, error) {
 	podName := podList.Items[0].Name
 	portFwdCmd := fmt.Sprintf("kubectl port-forward %s %d:%d -n %s", podName, localPort, remotePort, namespace)
-	portFwdProcess, err := executeCmdBackground(logf, stdout, stderr, portFwdCmd)
+	portFwdProcess, err := executeCmdBackground(logf, portFwdCmd)
 
 	if err != nil {
 		return 0, fmt.Errorf("failed to port forward: %w", err)
@@ -74,13 +89,11 @@ func PortForward(logf logging.FormatLogger, podList *v1.PodList, localPort, remo
 }
 
 // RunBackground starts a background process and returns the Process if succeed
-func executeCmdBackground(logf logging.FormatLogger, stdout io.Writer, stderr io.Writer, format string, args ...interface{}) (*os.Process, error) {
+func executeCmdBackground(logf logging.FormatLogger, format string, args ...interface{}) (*os.Process, error) {
 	cmd := fmt.Sprintf(format, args...)
 	logf("Executing command: %s", cmd)
 	parts := strings.Split(cmd, " ")
 	c := exec.Command(parts[0], parts[1:]...) // #nosec
-	c.Stdout = stdout
-	c.Stderr = stderr
 	if err := c.Start(); err != nil {
 		return nil, fmt.Errorf("%s command failed: %w", cmd, err)
 	}

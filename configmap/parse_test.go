@@ -22,19 +22,23 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 type testConfig struct {
-	str string
-	boo bool
-	i32 int32
-	i64 int64
-	u32 uint32
-	f64 float64
-	dur time.Duration
-	set sets.String
-	qua *resource.Quantity
+	str    string
+	toggle bool
+	i32    int32
+	i64    int64
+	u32    uint32
+	f64    float64
+	dur    time.Duration
+	set    sets.String
+	qua    *resource.Quantity
+
+	nsn  types.NamespacedName
+	onsn *types.NamespacedName
 }
 
 func TestParse(t *testing.T) {
@@ -57,46 +61,55 @@ func TestParse(t *testing.T) {
 			"test-duration": "1m",
 			"test-set":      "a,b,c",
 			"test-quantity": "500m",
+
+			"test-namespaced-name":          "some-namespace/some-name",
+			"test-optional-namespaced-name": "some-other-namespace/some-other-name",
 		},
 		want: testConfig{
-			str: "foo.bar",
-			boo: true,
-			i32: 1,
-			i64: 2,
-			u32: 3,
-			f64: 1.0,
-			dur: time.Minute,
-			set: sets.NewString("a", "b", "c"),
-			qua: &fiveHundredM,
+			str:    "foo.bar",
+			toggle: true,
+			i32:    1,
+			i64:    2,
+			u32:    3,
+			f64:    1.0,
+			dur:    time.Minute,
+			set:    sets.NewString("a", "b", "c"),
+			qua:    &fiveHundredM,
+			nsn: types.NamespacedName{
+				Name:      "some-name",
+				Namespace: "some-namespace",
+			},
+			onsn: &types.NamespacedName{
+				Name:      "some-other-name",
+				Namespace: "some-other-namespace",
+			},
 		},
 	}, {
 		name: "respect defaults",
 		conf: testConfig{
-			str: "foo.bar",
-			boo: true,
-			i32: 1,
-			i64: 2,
-			f64: 1.0,
-			dur: time.Minute,
-			qua: &fiveHundredM,
+			str:    "foo.bar",
+			toggle: true,
+			i32:    1,
+			i64:    2,
+			f64:    1.0,
+			dur:    time.Minute,
+			qua:    &fiveHundredM,
 		},
 		want: testConfig{
-			str: "foo.bar",
-			boo: true,
-			i32: 1,
-			i64: 2,
-			f64: 1.0,
-			dur: time.Minute,
-			qua: &fiveHundredM,
+			str:    "foo.bar",
+			toggle: true,
+			i32:    1,
+			i64:    2,
+			f64:    1.0,
+			dur:    time.Minute,
+			qua:    &fiveHundredM,
 		},
 	}, {
-		name: "bool defaults to false",
+		name: "junk bool fails",
 		data: map[string]string{
 			"test-bool": "foo",
 		},
-		want: testConfig{
-			boo: false,
-		},
+		expectErr: true,
 	}, {
 		name: "int32 error",
 		data: map[string]string{
@@ -133,13 +146,25 @@ func TestParse(t *testing.T) {
 			"test-quantity": "foo",
 		},
 		expectErr: true,
+	}, {
+		name: "types.NamespacedName bad dns name error",
+		data: map[string]string{
+			"test-namespaced-name": "some.bad.name/blah.bad.name",
+		},
+		expectErr: true,
+	}, {
+		name: "types.NamespacedName bad segment count error",
+		data: map[string]string{
+			"test-namespaced-name": "default/resource/whut",
+		},
+		expectErr: true,
 	}}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			if err := Parse(test.data,
 				AsString("test-string", &test.conf.str),
-				AsBool("test-bool", &test.conf.boo),
+				AsBool("test-bool", &test.conf.toggle),
 				AsInt32("test-int32", &test.conf.i32),
 				AsInt64("test-int64", &test.conf.i64),
 				AsUint32("test-uint32", &test.conf.u32),
@@ -147,6 +172,8 @@ func TestParse(t *testing.T) {
 				AsDuration("test-duration", &test.conf.dur),
 				AsStringSet("test-set", &test.conf.set),
 				AsQuantity("test-quantity", &test.conf.qua),
+				AsNamespacedName("test-namespaced-name", &test.conf.nsn),
+				AsOptionalNamespacedName("test-optional-namespaced-name", &test.conf.onsn),
 			); (err == nil) == test.expectErr {
 				t.Fatal("Failed to parse data:", err)
 			}

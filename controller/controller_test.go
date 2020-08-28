@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	fakekube "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
@@ -424,7 +425,18 @@ func (nr *NopReconciler) Reconcile(context.Context, string) error {
 	return nil
 }
 
-func TestEnqueues(t *testing.T) {
+type testRateLimiter struct {
+	t     *testing.T
+	delay time.Duration
+}
+
+func (t testRateLimiter) When(interface{}) time.Duration { return t.delay }
+func (t testRateLimiter) Forget(interface{})             {}
+func (t testRateLimiter) NumRequeues(interface{}) int    { return 0 }
+
+var _ workqueue.RateLimiter = (*testRateLimiter)(nil)
+
+func TestEnqueue(t *testing.T) {
 	tests := []struct {
 		name      string
 		work      func(*Impl)
@@ -457,6 +469,17 @@ func TestEnqueues(t *testing.T) {
 		name: "enqueue resource",
 		work: func(impl *Impl) {
 			impl.Enqueue(&Resource{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo",
+					Namespace: "bar",
+				},
+			})
+		},
+		wantQueue: []types.NamespacedName{{Namespace: "bar", Name: "foo"}},
+	}, {
+		name: "enqueue resource slow",
+		work: func(impl *Impl) {
+			impl.EnqueueSlow(&Resource{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
@@ -714,14 +737,26 @@ func TestEnqueues(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			t.Cleanup(ClearAll)
+			var rl workqueue.RateLimiter = testRateLimiter{t, 100 * time.Millisecond}
+			impl := NewImplFull(&NopReconciler{}, ControllerOptions{WorkQueueName: "Testing", Logger: TestLogger(t), RateLimiter: rl})
+			test.work(impl)
+
+			impl.WorkQueue().ShutDown()
+			gotQueue := drainWorkQueue(impl.WorkQueue())
+
+			if diff := cmp.Diff(test.wantQueue, gotQueue); diff != "" {
+				t.Errorf("unexpected queue (-want +got): %s", diff)
+			}
+		})
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			impl := NewImplWithStats(&NopReconciler{}, TestLogger(t), "Testing", &FakeStatsReporter{})
 			test.work(impl)
 
-			// The rate limit on our queue delays when things are added to the queue.
-			time.Sleep(50 * time.Millisecond)
-			impl.WorkQueue.ShutDown()
-			gotQueue := drainWorkQueue(impl.WorkQueue)
+			impl.WorkQueue().ShutDown()
+			gotQueue := drainWorkQueue(impl.WorkQueue())
 
 			if diff := cmp.Diff(test.wantQueue, gotQueue); diff != "" {
 				t.Errorf("unexpected queue (-want +got): %s", diff)
@@ -730,60 +765,146 @@ func TestEnqueues(t *testing.T) {
 	}
 }
 
-func TestEnqeueAfter(t *testing.T) {
-	t.Cleanup(ClearAll)
+func TestEnqueueAfter(t *testing.T) {
+	const (
+		// longDelay is longer than we expect the test to run.
+		longDelay = time.Minute
+		// shortDelay is short enough for the test to execute quickly, but long
+		// enough to reasonably delay the enqueuing of an item.
+		shortDelay = 50 * time.Millisecond
+
+		// time we allow the queue length checker to keep polling the
+		// workqueue.
+		queueCheckTimeout = shortDelay + 500*time.Millisecond
+	)
+
 	impl := NewImplWithStats(&NopReconciler{}, TestLogger(t), "Testing", &FakeStatsReporter{})
+	t.Cleanup(func() {
+		impl.WorkQueue().ShutDown()
+	})
+
+	// Enqueue two items with a long delay.
 	impl.EnqueueAfter(&Resource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "for",
 			Namespace: "waiting",
 		},
-	}, 5*time.Second)
+	}, longDelay)
 	impl.EnqueueAfter(&Resource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "waterfall",
 			Namespace: "the",
 		},
-	}, 500*time.Millisecond)
+	}, longDelay)
+
+	// Enqueue one item with a short delay.
+	enqueueTime := time.Now()
 	impl.EnqueueAfter(&Resource{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "to",
-			Namespace: "fall",
+			Name:      "fall",
+			Namespace: "to",
 		},
-	}, 20*time.Second)
-	time.Sleep(10 * time.Millisecond)
-	if got, want := impl.WorkQueue.Len(), 0; got != want {
-		t.Errorf("|Queue| = %d, want: %d", got, want)
+	}, shortDelay)
+
+	// Keep checking the queue length until 'to/fall' gets enqueued, send to channel to indicate success.
+	queuePopulated := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), queueCheckTimeout)
+
+	t.Cleanup(func() {
+		close(queuePopulated)
+		cancel()
+	})
+
+	var successCheck wait.ConditionFunc = func() (bool, error) {
+		if impl.WorkQueue().Len() > 0 {
+			queuePopulated <- struct{}{}
+			return true, nil
+		}
+		return false, nil
 	}
-	// Sleep the remaining time.
-	time.Sleep(time.Second)
-	if got, want := impl.WorkQueue.Len(), 1; got != want {
-		t.Errorf("|Queue| = %d, want: %d", got, want)
+	go wait.PollImmediateUntil(5*time.Millisecond, successCheck, ctx.Done())
+
+	select {
+	case <-queuePopulated:
+		if enqueueDelay := time.Since(enqueueTime); enqueueDelay < shortDelay {
+			t.Errorf("Item enqueued within %v, expected at least a %v delay", enqueueDelay, shortDelay)
+		}
+		if got, want := impl.WorkQueue().Len(), 1; got != want {
+			t.Errorf("|Queue| = %d, want: %d", got, want)
+		}
+
+	case <-ctx.Done():
+		t.Fatal("Timed out waiting for item to be put onto the workqueue")
 	}
-	impl.WorkQueue.ShutDown()
-	if got, want := drainWorkQueue(impl.WorkQueue), []types.NamespacedName{{Namespace: "the", Name: "waterfall"}}; !cmp.Equal(got, want) {
-		t.Errorf("Queue = %v, want: %v, diff: %s", got, want, cmp.Diff(got, want))
+
+	impl.WorkQueue().ShutDown()
+
+	got, want := drainWorkQueue(impl.WorkQueue()), []types.NamespacedName{{Namespace: "to", Name: "fall"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Unexpected workqueue state (-:expect, +:got):\n%s", diff)
 	}
 }
 
-func TestEnqeueKeyAfter(t *testing.T) {
-	t.Cleanup(ClearAll)
+func TestEnqueueKeyAfter(t *testing.T) {
+	const (
+		// longDelay is longer than we expect the test to run.
+		longDelay = time.Minute
+		// shortDelay is short enough for the test to execute quickly, but long
+		// enough to reasonably delay the enqueuing of an item.
+		shortDelay = 50 * time.Millisecond
+	)
+
 	impl := NewImplWithStats(&NopReconciler{}, TestLogger(t), "Testing", &FakeStatsReporter{})
-	impl.EnqueueKeyAfter(types.NamespacedName{Namespace: "waiting", Name: "for"}, 5*time.Second)
-	impl.EnqueueKeyAfter(types.NamespacedName{Namespace: "the", Name: "waterfall"}, 500*time.Millisecond)
-	impl.EnqueueKeyAfter(types.NamespacedName{Namespace: "to", Name: "fall"}, 20*time.Second)
-	time.Sleep(10 * time.Millisecond)
-	if got, want := impl.WorkQueue.Len(), 0; got != want {
-		t.Errorf("|Queue| = %d, want: %d", got, want)
+	t.Cleanup(func() {
+		impl.WorkQueue().ShutDown()
+	})
+
+	// Enqueue two items with a long delay.
+	impl.EnqueueKeyAfter(types.NamespacedName{Namespace: "waiting", Name: "for"}, longDelay)
+	impl.EnqueueKeyAfter(types.NamespacedName{Namespace: "the", Name: "waterfall"}, longDelay)
+
+	// Enqueue one item with a short delay.
+	enqueueTime := time.Now()
+	impl.EnqueueKeyAfter(types.NamespacedName{Namespace: "to", Name: "fall"}, shortDelay)
+
+	// Keep checking the queue length until 'to/fall' gets enqueued, send to channel to indicate success.
+	queuePopulated := make(chan struct{})
+
+	const queueCheckTimeout = shortDelay + 500*time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), queueCheckTimeout)
+
+	t.Cleanup(func() {
+		close(queuePopulated)
+		cancel()
+	})
+
+	var successCheck wait.ConditionFunc = func() (bool, error) {
+		if impl.WorkQueue().Len() > 0 {
+			queuePopulated <- struct{}{}
+			return true, nil
+		}
+		return false, nil
 	}
-	// Sleep the remaining time.
-	time.Sleep(time.Second)
-	if got, want := impl.WorkQueue.Len(), 1; got != want {
-		t.Errorf("|Queue| = %d, want: %d", got, want)
+	go wait.PollImmediateUntil(5*time.Millisecond, successCheck, ctx.Done())
+
+	select {
+	case <-queuePopulated:
+		if enqueueDelay := time.Since(enqueueTime); enqueueDelay < shortDelay {
+			t.Errorf("Item enqueued within %v, expected at least a %v delay", enqueueDelay, shortDelay)
+		}
+		if got, want := impl.WorkQueue().Len(), 1; got != want {
+			t.Errorf("|Queue| = %d, want: %d", got, want)
+		}
+
+	case <-ctx.Done():
+		t.Fatal("Timed out waiting for item to be put onto the workqueue")
 	}
-	impl.WorkQueue.ShutDown()
-	if got, want := drainWorkQueue(impl.WorkQueue), []types.NamespacedName{{Namespace: "the", Name: "waterfall"}}; !cmp.Equal(got, want) {
-		t.Errorf("Queue = %v, want: %v, diff: %s", got, want, cmp.Diff(got, want))
+
+	impl.WorkQueue().ShutDown()
+
+	got, want := drainWorkQueue(impl.WorkQueue()), []types.NamespacedName{{Namespace: "to", Name: "fall"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Unexpected workqueue state (-:expect, +:got):\n%s", diff)
 	}
 }
 
@@ -800,7 +921,6 @@ func (cr *CountingReconciler) Reconcile(context.Context, string) error {
 }
 
 func TestStartAndShutdown(t *testing.T) {
-	t.Cleanup(ClearAll)
 	r := &CountingReconciler{}
 	impl := NewImplWithStats(r, TestLogger(t), "Testing", &FakeStatsReporter{})
 
@@ -860,7 +980,6 @@ func (cr *countingLeaderAwareReconciler) Reconcile(ctx context.Context, key stri
 }
 
 func TestStartAndShutdownWithLeaderAwareNoElection(t *testing.T) {
-	t.Cleanup(ClearAll)
 	promoted := make(chan struct{})
 	r := &countingLeaderAwareReconciler{
 		LeaderAwareFuncs: reconciler.LeaderAwareFuncs{
@@ -906,7 +1025,6 @@ func TestStartAndShutdownWithLeaderAwareNoElection(t *testing.T) {
 }
 
 func TestStartAndShutdownWithLeaderAwareWithLostElection(t *testing.T) {
-	t.Cleanup(ClearAll)
 	promoted := make(chan struct{})
 	r := &countingLeaderAwareReconciler{
 		LeaderAwareFuncs: reconciler.LeaderAwareFuncs{
@@ -973,7 +1091,6 @@ func TestStartAndShutdownWithLeaderAwareWithLostElection(t *testing.T) {
 }
 
 func TestStartAndShutdownWithWork(t *testing.T) {
-	t.Cleanup(ClearAll)
 	r := &CountingReconciler{}
 	reporter := &FakeStatsReporter{}
 	impl := NewImplWithStats(r, TestLogger(t), "Testing", reporter)
@@ -1007,7 +1124,7 @@ func TestStartAndShutdownWithWork(t *testing.T) {
 	if got, want := r.count, 1; got != want {
 		t.Errorf("reconcile count = %v, wanted %v", got, want)
 	}
-	if got, want := impl.WorkQueue.NumRequeues(types.NamespacedName{Namespace: "foo", Name: "bar"}), 0; got != want {
+	if got, want := impl.WorkQueue().NumRequeues(types.NamespacedName{Namespace: "foo", Name: "bar"}), 0; got != want {
 		t.Errorf("requeues = %v, wanted %v", got, want)
 	}
 
@@ -1050,17 +1167,17 @@ func (er *ErrorReconciler) Reconcile(context.Context, string) error {
 }
 
 func TestStartAndShutdownWithErroringWork(t *testing.T) {
-	t.Cleanup(ClearAll)
-	r := &ErrorReconciler{}
-	reporter := &FakeStatsReporter{}
-	impl := NewImplWithStats(r, TestLogger(t), "Testing", reporter)
+	const testTimeout = 500 * time.Millisecond
 
-	ctx, cancel := context.WithCancel(context.Background())
+	item := types.NamespacedName{Namespace: "", Name: "bar"}
+
+	impl := NewImplWithStats(&ErrorReconciler{}, TestLogger(t), "Testing", &FakeStatsReporter{})
+	impl.EnqueueKey(item)
+
+	ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 	t.Cleanup(cancel)
+
 	doneCh := make(chan struct{})
-
-	impl.EnqueueKey(types.NamespacedName{Namespace: "", Name: "bar"})
-
 	go func() {
 		defer close(doneCh)
 		// StartAll blocks until all the worker threads finish, which shouldn't
@@ -1068,33 +1185,33 @@ func TestStartAndShutdownWithErroringWork(t *testing.T) {
 		StartAll(ctx, impl)
 	}()
 
+	// Keep checking the number of requeues, send to channel to indicate success.
+	itemRequeued := make(chan struct{})
+	defer close(itemRequeued)
+
+	var successCheck wait.ConditionFunc = func() (bool, error) {
+		// Check that the work was requeued in RateLimiter, as NumRequeues
+		// can't fully reflect the real state of queue length.
+		// Here we need to wait for NumRequeues to be more than 1, to ensure
+		// the key get re-queued and reprocessed as expect.
+		if impl.WorkQueue().NumRequeues(item) > 1 {
+			itemRequeued <- struct{}{}
+			return true, nil
+		}
+		return false, nil
+	}
+	go wait.PollImmediateUntil(5*time.Millisecond, successCheck, ctx.Done())
+
 	select {
-	case <-time.After(1 * time.Second):
-		// We don't expect completion before the context is cancelled,
-		// but the workers should spin on the erroring work.
+	case <-itemRequeued:
+		// shut down reconciler
+		cancel()
 
 	case <-doneCh:
-		t.Error("StartAll finished early.")
-	}
+		t.Fatal("StartAll finished early")
 
-	// By cancelling the context all the workers should complete and
-	// we should close the doneCh.
-	cancel()
-
-	select {
-	case <-time.After(1 * time.Second):
-		t.Error("Timed out waiting for controller to finish.")
-	case <-doneCh:
-		// We expect any outstanding work to complete, for the worker
-		// threads to complete and for doneCh to close in a timely manner.
-	}
-
-	// Check that the work was requeued in RateLimiter.
-	// As NumRequeues can't fully reflect the real state of queue length.
-	// Here we need to wait for NumRequeues to be more than 1, to ensure
-	// the key get re-queued and reprocessed as expect.
-	if got, wantAtLeast := impl.WorkQueue.NumRequeues(types.NamespacedName{Namespace: "", Name: "bar"}), 2; got < wantAtLeast {
-		t.Errorf("Requeue count = %v, wanted at least %v", got, wantAtLeast)
+	case <-ctx.Done():
+		t.Fatal("Timed out waiting for item to be requeued")
 	}
 }
 
@@ -1105,7 +1222,6 @@ func (er *PermanentErrorReconciler) Reconcile(context.Context, string) error {
 }
 
 func TestStartAndShutdownWithPermanentErroringWork(t *testing.T) {
-	t.Cleanup(ClearAll)
 	r := &PermanentErrorReconciler{}
 	reporter := &FakeStatsReporter{}
 	impl := NewImplWithStats(r, TestLogger(t), "Testing", reporter)
@@ -1137,7 +1253,7 @@ func TestStartAndShutdownWithPermanentErroringWork(t *testing.T) {
 	}
 
 	// Check that the work was not requeued in RateLimiter.
-	if got, want := impl.WorkQueue.NumRequeues(types.NamespacedName{Namespace: "foo", Name: "bar"}), 0; got != want {
+	if got, want := impl.WorkQueue().NumRequeues(types.NamespacedName{Namespace: "foo", Name: "bar"}), 0; got != want {
 		t.Errorf("Requeue count = %v, wanted %v", got, want)
 	}
 
@@ -1198,7 +1314,6 @@ func (*dummyStore) List() []interface{} {
 }
 
 func TestImplGlobalResync(t *testing.T) {
-	t.Cleanup(ClearAll)
 	r := &CountingReconciler{}
 	impl := NewImplWithStats(r, TestLogger(t), "Testing", &FakeStatsReporter{})
 
@@ -1214,9 +1329,10 @@ func TestImplGlobalResync(t *testing.T) {
 	impl.GlobalResync(&dummyInformer{})
 
 	// The global resync delays enqueuing things by a second with a jitter that
-	// goes up to len(dummyObjs) times a second.
+	// goes up to len(dummyObjs) times a second: time.Duration(1+len(dummyObjs)) * time.Second.
+	// In this test, the fast lane is empty, so we can assume immediate enqueuing.
 	select {
-	case <-time.After((1 + 3) * time.Second):
+	case <-time.After(50 * time.Millisecond):
 		// We don't expect completion before the context is cancelled.
 	case <-doneCh:
 		t.Error("StartAll finished early.")
@@ -1321,10 +1437,10 @@ func TestStartInformersEventualSuccess(t *testing.T) {
 	}()
 
 	select {
-	case err := <-errCh:
-		t.Errorf("Unexpected send on errCh: %v", err)
-	case <-time.After(1 * time.Second):
+	case <-time.After(50 * time.Millisecond):
 		// Wait a brief period to ensure nothing is sent.
+	case err := <-errCh:
+		t.Fatal("Unexpected send on errCh:", err)
 	}
 
 	// Let the Sync complete.
@@ -1352,10 +1468,10 @@ func TestStartInformersFailure(t *testing.T) {
 	}()
 
 	select {
-	case err := <-errCh:
-		t.Errorf("Unexpected send on errCh: %v", err)
-	case <-time.After(1 * time.Second):
+	case <-time.After(50 * time.Millisecond):
 		// Wait a brief period to ensure nothing is sent.
+	case err := <-errCh:
+		t.Fatal("Unexpected send on errCh:", err)
 	}
 
 	// Now close the stopCh and we should see an error sent.
@@ -1408,10 +1524,10 @@ func TestRunInformersEventualSuccess(t *testing.T) {
 	}()
 
 	select {
-	case err := <-errCh:
-		t.Fatalf("Unexpected send on errCh: %v", err)
-	case <-time.After(1 * time.Second):
+	case <-time.After(50 * time.Millisecond):
 		// Wait a brief period to ensure nothing is sent.
+	case err := <-errCh:
+		t.Fatal("Unexpected send on errCh:", err)
 	}
 
 	// Let the Sync complete.
@@ -1442,10 +1558,10 @@ func TestRunInformersFailure(t *testing.T) {
 	}()
 
 	select {
-	case err := <-errCh:
-		t.Errorf("Unexpected send on errCh: %v", err)
-	case <-time.After(1 * time.Second):
+	case <-time.After(50 * time.Millisecond):
 		// Wait a brief period to ensure nothing is sent.
+	case err := <-errCh:
+		t.Fatal("Unexpected send on errCh:", err)
 	}
 
 	// Now close the stopCh and we should see an error sent.

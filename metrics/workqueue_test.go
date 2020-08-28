@@ -82,18 +82,20 @@ func TestWorkqueueMetrics(t *testing.T) {
 
 	wq.Add("foo")
 
-	metricstest.CheckStatsReported(t, "adds", "depth")
-	metricstest.CheckStatsNotReported(t, "latency", "retries", "work_duration",
+	metricstest.AssertMetricExists(t, "adds", "depth")
+	metricstest.AssertNoMetric(t, "latency", "retries", "work_duration",
 		"unfinished_work_seconds", "longest_running_processor_seconds")
-	metricstest.CheckCountData(t, "adds", map[string]string{"name": queueName}, 1)
-	metricstest.CheckLastValueData(t, "depth", map[string]string{"name": queueName}, 1)
+	wantAdd := metricstest.IntMetric("adds", 1, map[string]string{"name": queueName})
+	wantDepth := metricstest.IntMetric("depth", 1, map[string]string{"name": queueName})
+	metricstest.AssertMetric(t, wantAdd, wantDepth)
 
 	wq.Add("bar")
 
-	metricstest.CheckStatsNotReported(t, "latency", "retries", "work_duration",
+	metricstest.AssertNoMetric(t, "latency", "retries", "work_duration",
 		"unfinished_work_seconds", "longest_running_processor_seconds")
-	metricstest.CheckCountData(t, "adds", map[string]string{"name": queueName}, 2)
-	metricstest.CheckLastValueData(t, "depth", map[string]string{"name": queueName}, 2)
+	*wantAdd.Values[0].Int64++
+	*wantDepth.Values[0].Int64++
+	metricstest.AssertMetric(t, wantAdd, wantDepth)
 
 	if got, shutdown := wq.Get(); shutdown {
 		t.Errorf("Get() = %v, true; want false", got)
@@ -104,10 +106,10 @@ func TestWorkqueueMetrics(t *testing.T) {
 		wq.Done(got)
 	}
 
-	metricstest.CheckStatsReported(t, "latency", "work_duration")
-	metricstest.CheckStatsNotReported(t, "retries",
+	metricstest.AssertMetricExists(t, "latency", "work_duration")
+	metricstest.AssertNoMetric(t, "retries",
 		"unfinished_work_seconds", "longest_running_processor_seconds")
-	metricstest.CheckCountData(t, "adds", map[string]string{"name": queueName}, 2)
+	metricstest.AssertMetric(t, wantAdd)
 
 	if got, shutdown := wq.Get(); shutdown {
 		t.Errorf("Get() = %v, true; want false", got)
@@ -119,15 +121,15 @@ func TestWorkqueueMetrics(t *testing.T) {
 	}
 
 	// It should show up as a retry now.
-	metricstest.CheckStatsReported(t, "retries")
-	metricstest.CheckStatsNotReported(t, "unfinished_work_seconds", "longest_running_processor_seconds")
-	metricstest.CheckCountData(t, "retries", map[string]string{"name": queueName}, 1)
-	// It is not added right away.
-	metricstest.CheckCountData(t, "adds", map[string]string{"name": queueName}, 2)
+	metricstest.AssertMetricExists(t, "retries")
+	metricstest.AssertNoMetric(t, "unfinished_work_seconds", "longest_running_processor_seconds")
+	wantRetries := metricstest.IntMetric("retries", 1, map[string]string{"name": queueName})
+	metricstest.AssertMetric(t, wantRetries, wantAdd) // It is not added right away.
 
 	// It doesn't show up as an "add" until the rate limit has elapsed.
 	time.Sleep(2 * limiter.delay)
-	metricstest.CheckCountData(t, "adds", map[string]string{"name": queueName}, 3)
+	*wantAdd.Values[0].Int64++
+	metricstest.AssertMetric(t, wantAdd)
 
 	wq.ShutDown()
 

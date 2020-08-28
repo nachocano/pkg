@@ -18,6 +18,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -28,25 +29,26 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	sd "contrib.go.opencensus.io/exporter/stackdriver"
 	ocmetrics "github.com/census-instrumentation/opencensus-proto/gen-go/agent/metrics/v1"
 	ocresource "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
-	emptypb "github.com/golang/protobuf/ptypes/empty"
-	"github.com/google/go-cmp/cmp"
 	"go.opencensus.io/resource"
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
+
+	emptypb "github.com/golang/protobuf/ptypes/empty"
+	"github.com/google/go-cmp/cmp"
 	"google.golang.org/api/option"
 	metricpb "google.golang.org/genproto/googleapis/api/metric"
 	monitoredrespb "google.golang.org/genproto/googleapis/api/monitoredres"
 	stackdriverpb "google.golang.org/genproto/googleapis/monitoring/v3"
 	"google.golang.org/grpc"
+
 	logtesting "knative.dev/pkg/logging/testing"
 	"knative.dev/pkg/metrics/metricskey"
-	//_ "knative.dev/pkg/metrics/testing"
+	"knative.dev/pkg/metrics/metricstest"
 )
 
 var (
@@ -62,11 +64,12 @@ func TestRegisterResourceView(t *testing.T) {
 
 	m := stats.Int64("testView_sum", "", stats.UnitDimensionless)
 	view := view.View{Name: "testView", Measure: m, Aggregation: view.Sum()}
-	err := RegisterResourceView(&view)
 
+	err := RegisterResourceView(&view)
 	if err != nil {
-		t.Errorf("RegisterResourceView with error %v.", err)
+		t.Fatal("RegisterResourceView =", err)
 	}
+	t.Cleanup(func() { UnregisterResourceView(&view) })
 
 	viewToFind := defaultMeter.m.Find("testView")
 	if viewToFind == nil || viewToFind.Name != "testView" {
@@ -294,6 +297,7 @@ func TestMetricsExport(t *testing.T) {
 			return UpdateExporter(configForBackend(prometheus), logtesting.TestLogger(t))
 		},
 		validate: func(t *testing.T) {
+			metricstest.EnsureRecorded()
 			resp, err := http.Get(fmt.Sprintf("http://localhost:%d/metrics", prometheusPort))
 			if err != nil {
 				t.Fatalf("failed to fetch prometheus metrics: %+v", err)
@@ -321,7 +325,7 @@ testComponent_testing_value{project="p1",revision="r2"} 1
 	}, {
 		name: "OpenCensus",
 		init: func() error {
-			if err := ocFake.start(); err != nil {
+			if err := ocFake.start(len(resources) + 1); err != nil {
 				return err
 			}
 			t.Logf("Created exporter at %s", ocFake.address)
@@ -334,11 +338,7 @@ testComponent_testing_value{project="p1",revision="r2"} 1
 			// [new duration] in the future.
 			view.Unregister(globalCounter)
 			UnregisterResourceView(gaugeView, resourceCounter)
-			FlushExporter()
 
-			time.Sleep(1 * time.Millisecond)
-			ocFake.srv.Stop() // Force close connections
-			ocFake.srv.GracefulStop()
 			records := []metricExtract{}
 			for record := range ocFake.published {
 				for _, m := range record.Metrics {
@@ -395,6 +395,7 @@ testComponent_testing_value{project="p1",revision="r2"} 1
 
 	for _, c := range harnesses {
 		t.Run(c.name, func(t *testing.T) {
+			ClearMetersForTest()
 			sdFake.t = t
 			if err := c.init(); err != nil {
 				t.Fatalf("unable to init: %+v", err)
@@ -402,7 +403,7 @@ testComponent_testing_value{project="p1",revision="r2"} 1
 
 			view.Register(globalCounter)
 			if err := RegisterResourceView(gaugeView, resourceCounter); err != nil {
-				t.Fatalf("Unable to register views: %v", err)
+				t.Fatal("Unable to register views:", err)
 			}
 			t.Cleanup(func() {
 				view.Unregister(globalCounter)
@@ -595,33 +596,42 @@ func TestStackDriverExports(t *testing.T) {
 type openCensusFake struct {
 	address   string
 	srv       *grpc.Server
+	exports   sync.WaitGroup
 	wg        sync.WaitGroup
 	published chan ocmetrics.ExportMetricsServiceRequest
 }
 
-func (oc *openCensusFake) start() error {
-	oc.published = make(chan ocmetrics.ExportMetricsServiceRequest, 100)
-	oc.wg.Add(1) // Make sure that add is called before Done
+func (oc *openCensusFake) start(expectedStreams int) error {
 	ln, err := net.Listen("tcp", oc.address)
 	if err != nil {
 		return err
 	}
+	oc.published = make(chan ocmetrics.ExportMetricsServiceRequest, 100)
 	oc.srv = grpc.NewServer()
 	ocmetrics.RegisterMetricsServiceServer(oc.srv, oc)
 	// Run the server in the background.
+	oc.wg.Add(1)
 	go func() {
 		oc.srv.Serve(ln)
 		oc.wg.Done()
 		oc.wg.Wait()
 		close(oc.published)
 	}()
+	oc.exports.Add(expectedStreams)
+	go oc.stop()
 	return nil
+}
+
+func (oc *openCensusFake) stop() {
+	oc.exports.Wait()
+	oc.srv.Stop()
 }
 
 func (oc *openCensusFake) Export(stream ocmetrics.MetricsService_ExportServer) error {
 	var streamResource *ocresource.Resource
 	oc.wg.Add(1)
 	defer oc.wg.Done()
+	metricSeen := false
 	for {
 		in, err := stream.Recv()
 		if err == io.EOF {
@@ -639,6 +649,10 @@ func (oc *openCensusFake) Export(stream ocmetrics.MetricsService_ExportServer) e
 				in.Resource = streamResource
 			}
 			oc.published <- *in
+			if !metricSeen {
+				oc.exports.Done()
+				metricSeen = true
+			}
 		}
 	}
 }
@@ -672,30 +686,30 @@ func (sd *stackDriverFake) CreateTimeSeries(ctx context.Context, req *stackdrive
 }
 
 func (sd *stackDriverFake) ListMonitoredResourceDescriptors(ctx context.Context, req *stackdriverpb.ListMonitoredResourceDescriptorsRequest) (*stackdriverpb.ListMonitoredResourceDescriptorsResponse, error) {
-	sd.t.Fatalf("ListMonitoredResourceDescriptors")
-	return nil, fmt.Errorf("Unimplemented")
+	sd.t.Fatal("ListMonitoredResourceDescriptors")
+	return nil, errors.New("Unimplemented")
 }
 
 func (sd *stackDriverFake) GetMonitoredResourceDescriptor(context.Context, *stackdriverpb.GetMonitoredResourceDescriptorRequest) (*monitoredrespb.MonitoredResourceDescriptor, error) {
-	sd.t.Fatalf("GetMonitoredResourceDescriptor")
-	return nil, fmt.Errorf("Unimplemented")
+	sd.t.Fatal("GetMonitoredResourceDescriptor")
+	return nil, errors.New("Unimplemented")
 }
 func (sd *stackDriverFake) ListMetricDescriptors(context.Context, *stackdriverpb.ListMetricDescriptorsRequest) (*stackdriverpb.ListMetricDescriptorsResponse, error) {
-	sd.t.Fatalf("ListMetricDescriptors")
-	return nil, fmt.Errorf("Unimplemented")
+	sd.t.Fatal("ListMetricDescriptors")
+	return nil, errors.New("Unimplemented")
 }
 func (sd *stackDriverFake) GetMetricDescriptor(context.Context, *stackdriverpb.GetMetricDescriptorRequest) (*metricpb.MetricDescriptor, error) {
-	sd.t.Fatalf("GetMetricDescriptor")
-	return nil, fmt.Errorf("Unimplemented")
+	sd.t.Fatal("GetMetricDescriptor")
+	return nil, errors.New("Unimplemented")
 }
 func (sd *stackDriverFake) CreateMetricDescriptor(ctx context.Context, req *stackdriverpb.CreateMetricDescriptorRequest) (*metricpb.MetricDescriptor, error) {
 	return req.MetricDescriptor, nil
 }
 func (sd *stackDriverFake) DeleteMetricDescriptor(context.Context, *stackdriverpb.DeleteMetricDescriptorRequest) (*emptypb.Empty, error) {
-	sd.t.Fatalf("DeleteMetricDescriptor")
-	return nil, fmt.Errorf("Unimplemented")
+	sd.t.Fatal("DeleteMetricDescriptor")
+	return nil, errors.New("Unimplemented")
 }
 func (sd *stackDriverFake) ListTimeSeries(context.Context, *stackdriverpb.ListTimeSeriesRequest) (*stackdriverpb.ListTimeSeriesResponse, error) {
-	sd.t.Fatalf("ListTimeSeries")
-	return nil, fmt.Errorf("Unimplemented")
+	sd.t.Fatal("ListTimeSeries")
+	return nil, errors.New("Unimplemented")
 }

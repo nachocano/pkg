@@ -17,6 +17,7 @@ limitations under the License.
 package metrics
 
 import (
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -32,7 +33,85 @@ func TestObservabilityConfiguration(t *testing.T) {
 		wantErr    bool
 		wantConfig *ObservabilityConfig
 	}{{
-		name:    "observability configuration with all inputs",
+		name: "observability configuration with all inputs",
+		wantConfig: &ObservabilityConfig{
+			EnableProbeRequestLog:  true,
+			EnableProfiling:        true,
+			EnableVarLogCollection: true,
+			EnableRequestLog:       true,
+			LoggingURLTemplate:     "https://logging.io",
+			RequestLogTemplate:     `{"requestMethod": "{{.Request.Method}}"}`,
+			RequestMetricsBackend:  "stackdriver",
+		},
+		data: map[string]string{
+			"logging.enable-probe-request-log":            "true",
+			"logging.enable-var-log-collection":           "true",
+			"logging.request-log-template":                `{"requestMethod": "{{.Request.Method}}"}`,
+			"logging.revision-url-template":               "https://logging.io",
+			"logging.enable-request-log":                  "true",
+			"metrics.request-metrics-backend-destination": "stackdriver",
+			"profiling.enable":                            "true",
+		},
+	}, {
+		name:       "observability config with no map",
+		wantConfig: defaultConfig(),
+	}, {
+		name:    "invalid request log template",
+		wantErr: true,
+		data: map[string]string{
+			"logging.request-log-template": `{{ something }}`,
+		},
+	}, {
+		name: "observability configuration with request log set and template default",
+		data: map[string]string{
+			"logging.enable-probe-request-log":            "true",
+			"logging.enable-request-log":                  "true",
+			"logging.enable-var-log-collection":           "true",
+			"logging.revision-url-template":               "https://logging.io",
+			"metrics.request-metrics-backend-destination": "stackdriver",
+			"profiling.enable":                            "true",
+		},
+		wantConfig: &ObservabilityConfig{
+			EnableProbeRequestLog:  true,
+			EnableProfiling:        true,
+			EnableRequestLog:       true,
+			EnableVarLogCollection: true,
+			LoggingURLTemplate:     "https://logging.io",
+			RequestLogTemplate:     DefaultRequestLogTemplate,
+			RequestMetricsBackend:  "stackdriver",
+		},
+	}, {
+		name: "observability configuration with request log and template not set",
+		wantConfig: &ObservabilityConfig{
+			EnableProbeRequestLog:  true,
+			EnableProfiling:        true,
+			EnableVarLogCollection: true,
+			LoggingURLTemplate:     "https://logging.io",
+			RequestMetricsBackend:  "stackdriver",
+		},
+		data: map[string]string{
+			"logging.enable-probe-request-log":            "true",
+			"logging.enable-request-log":                  "false",
+			"logging.enable-var-log-collection":           "true",
+			"logging.request-log-template":                "",
+			"logging.revision-url-template":               "https://logging.io",
+			"metrics.request-metrics-backend-destination": "stackdriver",
+			"profiling.enable":                            "true",
+		},
+	}, {
+		name:    "observability configuration with request log set and template not set",
+		wantErr: true,
+		data: map[string]string{
+			"logging.enable-probe-request-log":            "true",
+			"logging.enable-request-log":                  "true",
+			"logging.enable-var-log-collection":           "true",
+			"logging.request-log-template":                "",
+			"logging.revision-url-template":               "https://logging.io",
+			"metrics.request-metrics-backend-destination": "stackdriver",
+			"profiling.enable":                            "true",
+		},
+	}, {
+		name:    "observability configuration with request log not set and with template set",
 		wantErr: false,
 		wantConfig: &ObservabilityConfig{
 			EnableProbeRequestLog:  true,
@@ -47,20 +126,20 @@ func TestObservabilityConfiguration(t *testing.T) {
 			"logging.enable-var-log-collection":           "true",
 			"logging.request-log-template":                `{"requestMethod": "{{.Request.Method}}"}`,
 			"logging.revision-url-template":               "https://logging.io",
-			"logging.write-request-logs":                  "true",
 			"metrics.request-metrics-backend-destination": "stackdriver",
 			"profiling.enable":                            "true",
 		},
 	}, {
-		name:       "observability config with no map",
-		wantErr:    false,
-		wantConfig: defaultConfig(),
-	}, {
-		name:       "invalid request log template",
-		wantErr:    true,
-		wantConfig: nil,
+		name: "observability configuration with collector address",
+		wantConfig: &ObservabilityConfig{
+			LoggingURLTemplate:      DefaultLogURLTemplate,
+			RequestLogTemplate:      DefaultRequestLogTemplate,
+			RequestMetricsBackend:   "opencensus",
+			MetricsCollectorAddress: "otel:55678",
+		},
 		data: map[string]string{
-			"logging.request-log-template": `{{ something }}`,
+			"metrics.request-metrics-backend-destination": "opencensus",
+			"metrics.opencensus-address":                  "otel:55678",
 		},
 	}}
 
@@ -78,5 +157,22 @@ func TestObservabilityConfiguration(t *testing.T) {
 				t.Errorf("Got = %v, want: %v, diff(-want,+got)\n%s", got, want, cmp.Diff(want, got))
 			}
 		})
+	}
+}
+
+func TestConfigMapName(t *testing.T) {
+	if got, want := ConfigMapName(), "config-observability"; got != want {
+		t.Errorf("ConfigMapName = %q, want: %q", got, want)
+	}
+	t.Cleanup(func() {
+		os.Unsetenv(configMapNameEnv)
+	})
+	os.Setenv(configMapNameEnv, "")
+	if got, want := ConfigMapName(), "config-observability"; got != want {
+		t.Errorf("ConfigMapName = %q, want: %q", got, want)
+	}
+	os.Setenv(configMapNameEnv, "why-is-living-so-hard?")
+	if got, want := ConfigMapName(), "why-is-living-so-hard?"; got != want {
+		t.Errorf("ConfigMapName = %q, want: %q", got, want)
 	}
 }
