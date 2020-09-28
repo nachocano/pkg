@@ -379,7 +379,11 @@ func TestDurableConnectionWhenConnectionBreaksDown(t *testing.T) {
 
 func TestDurableConnectionSendsPingsRegularly(t *testing.T) {
 	// Reset pongTimeout to something quite short.
-	const pongTimeout = 100 * time.Millisecond
+	pingTimeoutBackup := pongTimeout
+	pongTimeout = 100 * time.Millisecond
+	t.Cleanup(func() {
+		pongTimeout = pingTimeoutBackup
+	})
 
 	upgrader := websocket.Upgrader{}
 
@@ -413,4 +417,45 @@ func TestDurableConnectionSendsPingsRegularly(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		<-pingReceived
 	}
+}
+
+func TestNewDurableSendingConnectionGuaranteed(t *testing.T) {
+	// Unhappy case.
+	logger := ktesting.TestLogger(t)
+	_, err := NewDurableSendingConnectionGuaranteed("ws://somewhere.not.exist", time.Second, logger)
+	if got, want := err.Error(), ErrConnectionNotEstablished.Error(); got != want {
+		t.Errorf("Got error: %v, want error: %v", got, want)
+	}
+
+	// Happy case.
+	const testPayload = "test"
+	reconnectChan := make(chan struct{})
+	upgrader := websocket.Upgrader{}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+
+		// Waits for a message to be sent before dropping the connection.
+		<-reconnectChan
+		c.Close()
+	}))
+	defer s.Close()
+
+	target := "ws" + strings.TrimPrefix(s.URL, "http")
+	conn, err := NewDurableSendingConnectionGuaranteed(target, time.Second, logger)
+	if err != nil {
+		t.Errorf("Got error from NewDurableSendingConnectionGuaranteed: %v", err)
+	}
+	defer conn.Shutdown()
+
+	// Sending the message immediately should be fine as the connection has been established.
+	if err := conn.Send(testPayload); err != nil {
+		t.Errorf("Failed to send a message: %v", err)
+	}
+
+	// Message successfully sent, instruct the server to drop the connection.
+	reconnectChan <- struct{}{}
+
 }

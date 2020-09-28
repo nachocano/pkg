@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/go-github/v27/github"
+	"knative.dev/pkg/ptr"
 	"knative.dev/pkg/test/ghutil"
 )
 
@@ -207,7 +209,7 @@ func (fgc *FakeGithubClient) RemoveLabelForIssue(org, repo string, issueNumber i
 }
 
 // ListPullRequests lists pull requests within given repo, filters by head user and branch name if
-// provided as "user:ref-name", and by base name if provided, i.e. "master"
+// provided as "user:ref-name", and by base name if provided, i.e. "release-0.19"
 func (fgc *FakeGithubClient) ListPullRequests(org, repo, head, base string) ([]*github.PullRequest, error) {
 	var res []*github.PullRequest
 	PRs, ok := fgc.PullRequests[repo]
@@ -239,11 +241,11 @@ func (fgc *FakeGithubClient) ListCommits(org, repo string, ID int) ([]*github.Re
 
 // ListFiles lists files from a pull request
 func (fgc *FakeGithubClient) ListFiles(org, repo string, ID int) ([]*github.CommitFile, error) {
-	var res []*github.CommitFile
 	commits, err := fgc.ListCommits(org, repo, ID)
 	if nil != err {
 		return nil, err
 	}
+	res := make([]*github.CommitFile, 0, len(commits))
 	for _, commit := range commits {
 		files, ok := fgc.CommitFiles[*commit.SHA]
 		if !ok {
@@ -294,7 +296,7 @@ func (fgc *FakeGithubClient) EditPullRequest(org, repo string, ID int, title, bo
 	return PR, nil
 }
 
-// CreatePullRequest creates PullRequest, passing head user and branch name "user:ref-name", and base branch name like "master"
+// CreatePullRequest creates PullRequest, passing head user and branch name "user:ref-name", and base branch name like "release-0.19"
 func (fgc *FakeGithubClient) CreatePullRequest(org, repo, head, base, title, body string) (*github.PullRequest, error) {
 	PRNumber := fgc.getNextNumber()
 	stateStr := string(ghutil.PullRequestOpenState)
@@ -374,10 +376,10 @@ func (fgc *FakeGithubClient) AddCommitToPullRequest(org, repo string, ID int, SH
 		return fmt.Errorf("repo %s not exist", repo)
 	}
 	if _, ok = PRs[ID]; !ok {
-		return fmt.Errorf("Pull Request %d not exist", ID)
+		return fmt.Errorf("pull Request %d not exist", ID)
 	}
 	if _, ok = fgc.PRCommits[ID]; !ok {
-		fgc.PRCommits[ID] = make([]*github.RepositoryCommit, 0)
+		fgc.PRCommits[ID] = make([]*github.RepositoryCommit, 0, 1)
 	}
 	fgc.PRCommits[ID] = append(fgc.PRCommits[ID], &github.RepositoryCommit{SHA: &SHA})
 	return nil
@@ -386,10 +388,11 @@ func (fgc *FakeGithubClient) AddCommitToPullRequest(org, repo string, ID int, SH
 func (fgc *FakeGithubClient) updateIssueState(org, repo string, state ghutil.IssueStateEnum, issueNumber int) error {
 	targetIssue := fgc.Issues[repo][issueNumber]
 	if nil == targetIssue {
-		return fmt.Errorf("cannot find issue")
+		return fmt.Errorf("cannot find issue %d", issueNumber)
 	}
 	stateStr := string(state)
 	targetIssue.State = &stateStr
+	targetIssue.UpdatedAt = ptr.Time(time.Now())
 	return nil
 }
 
